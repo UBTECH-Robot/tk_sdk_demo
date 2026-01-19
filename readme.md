@@ -1,9 +1,9 @@
 ### 1，创建工程目录
 
-如果是从0开始创建工程时先创建目录并进入（这里假设工程名为ros2demo）：
+如果是从0开始创建工程时先创建目录并进入（这里假设工程名为sdk_demo）：
 ```bash
-mkdir -p ~/ros2demo/src
-cd ~/ros2demo/src
+mkdir -p ~/sdk_demo/src
+cd ~/sdk_demo/src
 ```
 
 ### 2，创建ROS2项目
@@ -32,7 +32,7 @@ ros2 pkg create sdk_demo --build-type ament_python --dependencies rclpy geometry
 
 进入项目根目录，执行编译命令
 ```bash
-cd ~/ros2demo
+cd ~/sdk_demo
 colcon build --packages-select sdk_demo
 ```
 
@@ -45,7 +45,7 @@ colcon build --packages-select sdk_demo
 
 然后source当前项目的环境变量
 ```bash
-. ~/ros2demo/install/setup.bash
+. ~/sdk_demo/install/setup.bash
 ```
 
 运行示例代码：
