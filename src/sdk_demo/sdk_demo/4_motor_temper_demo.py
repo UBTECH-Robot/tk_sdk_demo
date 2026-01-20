@@ -4,17 +4,17 @@ from rclpy.node import Node
 import sys
 from bodyctrl_msgs.msg import MotorStatus1
 
-url1 = '/waist/motor_status'
-url2 = '/arm/motor_status'
-url3 = '/leg/motor_status'
+topic1 = '/waist/motor_status'
+topic2 = '/arm/motor_status'
+topic3 = '/leg/motor_status'
 
-urls = {"waist": url1, "arm": url2, "leg": url3}
+topic_map = {"waist": topic1, "arm": topic2, "leg": topic3}
 
 class MotorTempMonitor(Node):
     def __init__(self):
         super().__init__('waist_motor_temp_monitor')
-        self.url = url1
-        topic_name = urls.get(sys.argv[1] if len(sys.argv) > 1 else 'waist', url1)
+        self.url = topic1
+        topic_name = topic_map.get(sys.argv[1] if len(sys.argv) > 1 else 'waist', topic1)
         self.subscription = self.create_subscription(
             MotorStatus1,
             topic_name,
