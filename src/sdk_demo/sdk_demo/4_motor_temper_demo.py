@@ -31,14 +31,14 @@ from rclpy.node import Node
 import sys
 from bodyctrl_msgs.msg import MotorStatusMsg1
 
-# 定义各个关节的电机状态话题名称
-# 腰部关节的电机状态话题
+# 定义各个关节的电机温度信息话题名称
+# 腰部关节的电机温度信息话题
 topic1 = '/waist/motor_status'
-# 手臂关节的电机状态话题
+# 手臂关节的电机温度信息话题
 topic2 = '/arm/motor_status'
-# 腿部关节的电机状态话题
+# 腿部关节的电机温度信息话题
 topic3 = '/leg/motor_status'
-# 头部关节的电机状态话题
+# 头部关节的电机温度信息话题
 topic4 = '/head/motor_status'
 
 # 话题映射字典

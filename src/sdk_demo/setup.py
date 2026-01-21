@@ -24,7 +24,7 @@ setup(
             'imu_demo = sdk_demo.3_1_imu_demo:main',
             'imu_status_demo = sdk_demo.3_2_imu_status_demo:main',
             'motor_temper_demo = sdk_demo.4_motor_temper_demo:main',
-            'waist_status_demo = sdk_demo.5_1_waist_status_demo:main',
+            'motor_status_demo = sdk_demo.5_motor_status_demo:main',
             'waist_control_demo = sdk_demo.5_2_1_waist_control_demo:main',
             'arm_status_demo = sdk_demo.6_1_1_arm_status_demo:main',
             'arm_control_demo = sdk_demo.6_2_1_arm_control_demo:main',
