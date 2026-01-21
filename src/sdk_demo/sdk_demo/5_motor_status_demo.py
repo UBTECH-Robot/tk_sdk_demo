@@ -133,7 +133,7 @@ class MotorStatusMonitor(Node):
                 # 遍历数组中的每个电机，并打印其详细信息
                 for i, motor in enumerate(motor_array):
                     # 打印电机索引和分隔线
-                    self.get_logger().info(f"========== 【电机{i}】 ==========")
+                    self.get_logger().info(f"========== 【电机{motor.name}】 ==========")
                     
                     # 打印电机名称/ID
                     self.get_logger().info(f"  电机ID: {motor.name}")

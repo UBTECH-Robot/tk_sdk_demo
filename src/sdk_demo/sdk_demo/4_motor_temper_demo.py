@@ -122,7 +122,6 @@ class MotorTempMonitor(Node):
                     # 打印电机索引、名称、电机温度和MOS温度
                     # 温度值使用.1f格式，保留一位小数
                     self.get_logger().info(
-                        f"【电机{i}】 "
                         f"电机ID={motor.name}, "
                         f"电机温度={motor.motortemperature:.1f}°C, "
                         f"MOS温度={motor.mostemperature:.1f}°C"
