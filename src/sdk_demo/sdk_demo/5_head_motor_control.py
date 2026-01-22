@@ -5,11 +5,6 @@
 
 功能说明：
     本脚本演示了如何使用三种不同的控制模式来控制头部电机的运动
-    头部包含3个电机，电机ID分别为：1, 2, 3，运动范围：
-    - 1: -26度到+26度
-    - 2: -25度到+25度
-    - 3: -90度到+90度
-    运动超过范围则电机会断开连接，无法再被控制，可手动将电机复位到合理位置后重启 proc_manager 服务(注意确保重启时机器人是安全固定在移位机上的)
 
 使用方法(要先确保机器人本体服务是启动着的)：
     执行位置控制模式示例（默认）：
@@ -84,26 +79,18 @@ from bodyctrl_msgs.msg import (
 import time
 import sys
 
-# 头部电机ID定义
-# 头部有3个电机，分别控制不同的自由度（如俯仰、左右转、滚转）
-HEAD_MOTOR_ID_1 = 1 # 头关节翻滚
-HEAD_MOTOR_ID_2 = 2 # 头关节俯仰
-HEAD_MOTOR_ID_3 = 3 # 头关节偏航
+# 头部包含3个电机，电机ID和运动范围：
+motor_angle_limits_dict = {
+    1: [-26, 26],   #（头关节翻滚 Head Roll）: -26度到+26度
+    2: [-25, 25],   #（头关节俯仰 Head Pitch）:  -25度到+25度
+    3: [-90, 90],   #（头关节偏航 Head Yaw）:   -90度到+90度
+}
+# 运动超过范围则电机会断开连接，无法再被控制，可手动将电机复位到合理位置后重启 proc_manager 服务(注意确保重启时机器人是安全固定在移位机上的)
 
 # 电机ID列表，用于批量控制
-HEAD_MOTOR_IDS = [HEAD_MOTOR_ID_1, HEAD_MOTOR_ID_2, HEAD_MOTOR_ID_3]
+HEAD_MOTOR_IDS = [1, 2, 3]
 
-# 电机运动范围定义（弧度）
-# 转换说明：1弧度 ≈ 57.3度，1度 ≈ 0.01745弧度
 import math
-MOTOR_1_MAX = 26 * math.pi / 180  # 电机1: -26°到+26°，最大值一半 = 13° ≈ 0.227 rad
-MOTOR_2_MAX = 25 * math.pi / 180  # 电机2: -25°到+25°，最大值一半 = 12.5° ≈ 0.218 rad
-MOTOR_3_MAX = 90 * math.pi / 180  # 电机3: -90°到+90°，最大值一半 = 45° ≈ 0.785 rad
-
-# 目标位置（运动到最大值的一半）
-MOTOR_1_TARGET = MOTOR_1_MAX / 2  # 电机1: 13° ≈ 0.227 rad
-MOTOR_2_TARGET = MOTOR_2_MAX / 2  # 电机2: 12.5° ≈ 0.218 rad
-MOTOR_3_TARGET = MOTOR_3_MAX / 2  # 电机3: 45° ≈ 0.785 rad
 
 # 控制参数定义
 VELOCITY_LIMIT = 1.0  # 速度限制（弧度/秒）
@@ -119,6 +106,20 @@ CONTROL_SPEED = 1.0  # 目标速度（弧度/秒，平缓速度）
 # 速度模式安全参数
 VELOCITY_MODE_DURATION = 5.0  # 速度模式持续时间（秒）- 防止电机无限运转
 VELOCITY_MODE_STOP_DURATION = 0.5  # 停止命令持续时间（秒）- 确保电机停止
+
+def degree_to_radian(degree):
+    """
+    度转换为弧度，1弧度 ≈ 57.3度，1度 ≈ 0.01745弧度
+    """
+    return degree * math.pi / 180.0
+
+def radian_to_target_radian(radian):
+    """
+    将最大弧度转换为目标弧度，暂定为最大弧度的三分之一
+    
+    :param radian: 电机的最大弧度
+    """
+    return radian / 3
 
 class HeadMotorController(Node):
     """
@@ -278,16 +279,11 @@ class HeadMotorController(Node):
         msg.header = header
         
         # 为每个电机创建控制命令
-        # 目标位置为各电机最大值的一半
-        target_positions = {
-            HEAD_MOTOR_ID_1: MOTOR_1_TARGET,
-            HEAD_MOTOR_ID_2: MOTOR_2_TARGET,
-            HEAD_MOTOR_ID_3: MOTOR_3_TARGET
-        }
         
         for motor_id in HEAD_MOTOR_IDS:
             # 获取该电机的目标位置
-            target_pos = target_positions[motor_id]
+            motor_max_pos_degree = motor_angle_limits_dict[motor_id][1]
+            target_pos = radian_to_target_radian(degree_to_radian(motor_max_pos_degree))
             
             # 创建单个电机的位置命令
             cmd = SetMotorPosition()
@@ -384,16 +380,11 @@ class HeadMotorController(Node):
         msg.header = header
         
         # 为每个电机创建控制命令
-        # 目标位置为各电机最大值的一半
-        target_positions = {
-            HEAD_MOTOR_ID_1: MOTOR_1_TARGET,
-            HEAD_MOTOR_ID_2: MOTOR_2_TARGET,
-            HEAD_MOTOR_ID_3: MOTOR_3_TARGET
-        }
         
         for motor_id in HEAD_MOTOR_IDS:
             # 获取该电机的目标位置
-            target_pos = target_positions[motor_id]
+            motor_max_pos_degree = motor_angle_limits_dict[motor_id][1]
+            target_pos = radian_to_target_radian(degree_to_radian(motor_max_pos_degree))
             
             # 创建单个电机的力位混合命令
             cmd = MotorCtrl()

@@ -5,25 +5,7 @@
 
 功能说明：
     本脚本演示了如何使用三种不同的控制模式来控制双臂电机的运动
-    双臂包含14个电机（左右臂各7个电机），电机ID和运动范围：
-    - 11（左肩关节俯仰 Left Shoulder Pitch）: -170度到+170度
-    - 12（左肩关节翻滚 Left Shoulder Roll）: -15度到+150度
-    - 13（左肩关节偏航 Left Shoulder Yaw）: -170度到+170度
-    - 14（左肘关节俯仰 Left Elbow Pitch）: -150度到+15度
-    - 15（左腕关节偏航 Left Wrist Yaw）: -170度到+170度
-    - 16（左腕关节俯仰 Left Wrist Pitch）: -45度到+60度
-    - 17（左腕关节翻滚 Left WristRoll）: -95度到+75度
-
-    - 21（右肩关节俯仰 Left Shoulder Pitch）: -170度到+170度
-    - 22（右肩关节翻滚 Left Shoulder Roll）: -150度到+15度
-    - 23（右肩关节偏航 Left Shoulder Yaw）: -170度到+170度
-    - 24（右肘关节俯仰 Left Elbow Pitch）: -150度到+15度
-    - 25（右腕关节偏航 Left Wrist Yaw）: -170度到+170度
-    - 26（右腕关节俯仰 Left Wrist Pitch）: -45度到+60度
-    - 27（右腕关节翻滚 Left WristRoll）: -75度到+95度
     
-    运动超过范围则电机会断开连接，无法再被控制，可手动将电机复位到合理位置后重启机器人本体服务(注意确保重启时机器人是安全固定在移位机上的)
-
 使用方法(要先确保机器人本体服务是启动着的)：
     执行位置控制模式示例（默认）：
         ros2 run sdk_demo arm_motor_control pos
@@ -97,55 +79,32 @@ from bodyctrl_msgs.msg import (
 import time
 import sys
 
-# 左臂电机
-arm_MOTOR_ID_11 = 11 #（左肩关节俯仰 Left Shoulder Pitch）: -170度到+170度
-arm_MOTOR_ID_12 = 12 #（左肩关节翻滚 Left Shoulder Roll）: -15度到+150度
-arm_MOTOR_ID_13 = 13 #（左肩关节偏航 Left Shoulder Yaw）: -170度到+170度
-arm_MOTOR_ID_14 = 14 #（左肘关节俯仰 Left Elbow Pitch）: -150度到+15度
-arm_MOTOR_ID_15 = 15 #（左腕关节偏航 Left Wrist Yaw）: -170度到+170度
-arm_MOTOR_ID_16 = 16 #（左腕关节俯仰 Left Wrist Pitch）: -45度到+60度
-arm_MOTOR_ID_17 = 17 #（左腕关节翻滚 Left WristRoll）: -95度到+75度
-
-# 右臂电机
-arm_MOTOR_ID_21 = 21 # 右肩关节俯仰 Left Shoulder Pitch）: -170度到+170度
-arm_MOTOR_ID_22 = 22 # 右肩关节翻滚 Left Shoulder Roll）: -150度到+15度
-arm_MOTOR_ID_23 = 23 # 右肩关节偏航 Left Shoulder Yaw）: -170度到+170度
-arm_MOTOR_ID_24 = 24 # 右肘关节俯仰 Left Elbow Pitch）: -150度到+15度
-arm_MOTOR_ID_25 = 25 # 右腕关节偏航 Left Wrist Yaw）: -170度到+170度
-arm_MOTOR_ID_26 = 26 # 右腕关节俯仰 Left Wrist Pitch）: -45度到+60度
-arm_MOTOR_ID_27 = 27 # 右腕关节翻滚 Left WristRoll）: -75度到+95度
-
+# 双臂包含14个电机（左右臂各7个电机），电机ID和运动范围：
 motor_angle_limits_dict = {
-    arm_MOTOR_ID_11: [-170, 170],
-    arm_MOTOR_ID_12: [-15, 150],
-    arm_MOTOR_ID_13: [-170, 170],
-    arm_MOTOR_ID_14: [-150, 15],
-    arm_MOTOR_ID_15: [-170, 170],
-    arm_MOTOR_ID_16: [-45, 60],
-    arm_MOTOR_ID_17: [-95, 75],
-
-    arm_MOTOR_ID_21: [-170, 170],
-    arm_MOTOR_ID_22: [-150, 15],
-    arm_MOTOR_ID_23: [-170, 170],
-    arm_MOTOR_ID_24: [-150, 15],
-    arm_MOTOR_ID_25: [-170, 170],
-    arm_MOTOR_ID_26: [-45, 60],
-    arm_MOTOR_ID_27: [-75, 95],
+    # 左臂电机
+    11: [-170, 170],   #（左肩关节俯仰 Left Shoulder Pitch）: -170度到+170度
+    12: [-15, 150],    #（左肩关节翻滚 Left Shoulder Roll）: -15度到+150度
+    13: [-170, 170],   #（左肩关节偏航 Left Shoulder Yaw）: -170度到+170度
+    14: [-150, 15],    #（左肘关节俯仰 Left Elbow Pitch）: -150度到+15度
+    15: [-170, 170],   #（左腕关节偏航 Left Wrist Yaw）: -170度到+170度
+    16: [-45, 60],     #（左腕关节俯仰 Left Wrist Pitch）: -45度到+60度
+    17: [-95, 75],     #（左腕关节翻滚 Left WristRoll）: -95度到+75度
+  
+    # 右臂电机  
+    21: [-170, 170],   # 右肩关节俯仰 Left Shoulder Pitch）: -170度到+170度
+    22: [-150, 15],    # 右肩关节翻滚 Left Shoulder Roll）: -150度到+15度
+    23: [-170, 170],   # 右肩关节偏航 Left Shoulder Yaw）: -170度到+170度
+    24: [-150, 15],    # 右肘关节俯仰 Left Elbow Pitch）: -150度到+15度
+    25: [-170, 170],   # 右腕关节偏航 Left Wrist Yaw）: -170度到+170度
+    26: [-45, 60],     # 右腕关节俯仰 Left Wrist Pitch）: -45度到+60度
+    27: [-75, 95],     # 右腕关节翻滚 Left WristRoll）: -75度到+95度
 }
+# 运动超过范围则电机会断开连接，无法再被控制，可手动将电机复位到合理位置后重启机器人本体服务(注意确保重启时机器人是安全固定在移位机上的)
+
 # 电机ID列表，用于批量控制
-arm_MOTOR_IDS = [arm_MOTOR_ID_1, arm_MOTOR_ID_2, arm_MOTOR_ID_3]
+arm_MOTOR_IDS = [12]
 
-# 电机运动范围定义（弧度）
-# 转换说明：1弧度 ≈ 57.3度，1度 ≈ 0.01745弧度
 import math
-MOTOR_1_MAX = 26 * math.pi / 180  # 电机1: -26°到+26°，最大值一半 = 13° ≈ 0.227 rad
-MOTOR_2_MAX = 25 * math.pi / 180  # 电机2: -25°到+25°，最大值一半 = 12.5° ≈ 0.218 rad
-MOTOR_3_MAX = 90 * math.pi / 180  # 电机3: -90°到+90°，最大值一半 = 45° ≈ 0.785 rad
-
-# 目标位置（运动到最大值的一半）
-MOTOR_1_TARGET = MOTOR_1_MAX / 2  # 电机1: 13° ≈ 0.227 rad
-MOTOR_2_TARGET = MOTOR_2_MAX / 2  # 电机2: 12.5° ≈ 0.218 rad
-MOTOR_3_TARGET = MOTOR_3_MAX / 2  # 电机3: 45° ≈ 0.785 rad
 
 # 控制参数定义
 VELOCITY_LIMIT = 1.0  # 速度限制（弧度/秒）
@@ -161,6 +120,20 @@ CONTROL_SPEED = 1.0  # 目标速度（弧度/秒，平缓速度）
 # 速度模式安全参数
 VELOCITY_MODE_DURATION = 5.0  # 速度模式持续时间（秒）- 防止电机无限运转
 VELOCITY_MODE_STOP_DURATION = 0.5  # 停止命令持续时间（秒）- 确保电机停止
+
+def degree_to_radian(degree):
+    """
+    度转换为弧度，1弧度 ≈ 57.3度，1度 ≈ 0.01745弧度
+    """
+    return degree * math.pi / 180.0
+
+def radian_to_target_radian(radian):
+    """
+    将最大弧度转换为目标弧度，暂定为最大弧度的三分之一
+    
+    :param radian: 电机的最大弧度
+    """
+    return radian / 3
 
 class HeadMotorController(Node):
     """
@@ -214,14 +187,7 @@ class HeadMotorController(Node):
             10
         )
         self.get_logger().info("✓ 标零发布者已创建（话题：/arm/cmd_set_zero）")
-        
-        # 记录各电机的当前位置（用于相对运动）
-        self.motor_positions = {
-            arm_MOTOR_ID_1: 0.0,
-            arm_MOTOR_ID_2: 0.0,
-            arm_MOTOR_ID_3: 0.0
-        }
-        
+                
         self.get_logger().info("=" * 50)
         self.get_logger().info("双臂电机控制节点已初始化完成")
         self.get_logger().info("=" * 50)
@@ -295,11 +261,6 @@ class HeadMotorController(Node):
         self.pos_cmd_publisher.publish(msg)
         self.get_logger().info("✓ 回零命令已发送")
         
-        # 更新内部位置记录
-        for motor_id in arm_MOTOR_IDS:
-            self.motor_positions[motor_id] = 0.0
-        
-        self.get_logger().info("✓ 电机已回零")
         time.sleep(1)  # 给电机足够的时间运动到零位
 
     def position_control_mode(self):
@@ -331,18 +292,11 @@ class HeadMotorController(Node):
         msg = CmdSetMotorPosition()
         msg.header = header
         
-        # 为每个电机创建控制命令
-        # 目标位置为各电机最大值的一半
-        target_positions = {
-            arm_MOTOR_ID_1: MOTOR_1_TARGET,
-            arm_MOTOR_ID_2: MOTOR_2_TARGET,
-            arm_MOTOR_ID_3: MOTOR_3_TARGET
-        }
-        
+        # 为每个电机创建控制命令        
         for motor_id in arm_MOTOR_IDS:
             # 获取该电机的目标位置
-            target_pos = target_positions[motor_id]
-            self.motor_positions[motor_id] = target_pos
+            motor_max_pos_degree = motor_angle_limits_dict[motor_id][1]
+            target_pos = radian_to_target_radian(degree_to_radian(motor_max_pos_degree))
             
             # 创建单个电机的位置命令
             cmd = SetMotorPosition()
@@ -438,18 +392,11 @@ class HeadMotorController(Node):
         msg = CmdMotorCtrl()
         msg.header = header
         
-        # 为每个电机创建控制命令
-        # 目标位置为各电机最大值的一半
-        target_positions = {
-            arm_MOTOR_ID_1: MOTOR_1_TARGET,
-            arm_MOTOR_ID_2: MOTOR_2_TARGET,
-            arm_MOTOR_ID_3: MOTOR_3_TARGET
-        }
-        
+        # 为每个电机创建控制命令        
         for motor_id in arm_MOTOR_IDS:
-            # 获取该电机的目标位置
-            target_pos = target_positions[motor_id]
-            self.motor_positions[motor_id] = target_pos
+            # 获取该电机的目标位置            
+            motor_max_pos_degree = motor_angle_limits_dict[motor_id][1]
+            target_pos = radian_to_target_radian(degree_to_radian(motor_max_pos_degree))
             
             # 创建单个电机的力位混合命令
             cmd = MotorCtrl()
