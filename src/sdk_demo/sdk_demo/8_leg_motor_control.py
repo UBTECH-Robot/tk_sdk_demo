@@ -123,7 +123,10 @@ def degree_to_radian(degree):
     """
     度转换为弧度，1弧度 ≈ 57.3度，1度 ≈ 0.01745弧度
     """
-    return degree * math.pi / 180.0
+    d = degree
+    if abs(d) > 60:
+        d = 60 if d > 0 else -60
+    return d * math.pi / 180.0
 
 def radian_to_target_radian(radian):
     """
@@ -638,24 +641,24 @@ def main(args=None):
         elif mode == "position":
             # 执行位置模式
             controller.homing()  # 先回零
-            time.sleep(1)
+            time.sleep(3)
             controller.position_control_mode()
             
         elif mode == "impedance":
             # 执行阻抗模式
             controller.homing()  # 先回零
-            time.sleep(1)
+            time.sleep(3)
             controller.impedance_control_mode()
             
         elif mode == "velocity":
             # 执行速度模式
             controller.homing()  # 先回零
-            time.sleep(1)
+            time.sleep(3)
             controller.velocity_control_mode()
         
         elif mode == "zero":
             controller.homing()  # 这里只是示例，所以先回零，确保所有关节都在零位
-            time.sleep(1)
+            time.sleep(3)
             controller.homing()  # 这里只是示例，所以先回零，确保所有关节都在零位
             # 执行标零
             controller.set_zero()

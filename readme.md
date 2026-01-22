@@ -51,4 +51,5 @@ colcon build --packages-select sdk_demo
 运行示例代码：
 ```bash
 ros2 run sdk_demo arm_control_demo
+ros2 run sdk_demo rl_cmd_control_test
 ```

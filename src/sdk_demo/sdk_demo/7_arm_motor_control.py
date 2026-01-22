@@ -82,27 +82,28 @@ import sys
 # 双臂包含14个电机（左右臂各7个电机），电机ID和运动范围：
 motor_angle_limits_dict = {
     # 左臂电机
-    11: [-170, 170],   #（左肩关节俯仰 Left Shoulder Pitch）: -170度到+170度
-    12: [-15, 150],    #（左肩关节翻滚 Left Shoulder Roll）: -15度到+150度
-    13: [-170, 170],   #（左肩关节偏航 Left Shoulder Yaw）: -170度到+170度
-    14: [15, -150],    #（左肘关节俯仰 Left Elbow Pitch）: +15度到-150度
-    15: [-170, 170],   #（左腕关节偏航 Left Wrist Yaw）: -170度到+170度，仅无疆版本支持
-    16: [-45, 60],     #（左腕关节俯仰 Left Wrist Pitch）: -45度到+60度，仅无疆版本支持
-    17: [-95, 75],     #（左腕关节翻滚 Left Wrist Roll）: -95度到+75度，仅无疆版本支持
+    11: [-170, 170, 10],   #（左肩关节俯仰 Left Shoulder Pitch）: -170度到+170度
+    12: [-15, 150, 10],    #（左肩关节翻滚 Left Shoulder Roll）: -15度到+150度
+    13: [-170, 170, 30],   #（左肩关节偏航 Left Shoulder Yaw）: -170度到+170度
+    14: [15, -150, -30],    #（左肘关节俯仰 Left Elbow Pitch）: +15度到-150度
+    15: [-170, 170, 40],   #（左腕关节偏航 Left Wrist Yaw）: -170度到+170度，仅无疆版本支持
+    16: [60, -45, -20],     #（左腕关节俯仰 Left Wrist Pitch）: -45度到+60度，仅无疆版本支持
+    17: [75, -95, -30],     #（左腕关节翻滚 Left Wrist Roll）: -95度到+75度，仅无疆版本支持
   
     # 右臂电机  
-    21: [-170, 170],   # 右肩关节俯仰 Right Shoulder Pitch）: -170度到+170度
-    22: [15, -150],    # 右肩关节翻滚 Right Shoulder Roll）: +15度到-150度
-    23: [-170, 170],   # 右肩关节偏航 Right Shoulder Yaw）: -170度到+170度
-    24: [15, -150],    # 右肘关节俯仰 Right Elbow Pitch）: +15度到-150度
-    25: [-170, 170],   # 右腕关节偏航 Right Wrist Yaw）: -170度到+170度，仅无疆版本支持
-    26: [-45, 60],     # 右腕关节俯仰 Right Wrist Pitch）: -45度到+60度，仅无疆版本支持
-    27: [-75, 95],     # 右腕关节翻滚 Right Wrist Roll）: -75度到+95度，仅无疆版本支持
+    21: [-170, 170, 10],   # 右肩关节俯仰 Right Shoulder Pitch）: -170度到+170度
+    22: [15, -150, -10],    # 右肩关节翻滚 Right Shoulder Roll）: +15度到-150度
+    23: [-170, 170, 30],   # 右肩关节偏航 Right Shoulder Yaw）: -170度到+170度
+    24: [15, -150, -30],    # 右肘关节俯仰 Right Elbow Pitch）: +15度到-150度
+    25: [-170, 170, 40],   # 右腕关节偏航 Right Wrist Yaw）: -170度到+170度，仅无疆版本支持
+    26: [60, -45, -20],     # 右腕关节俯仰 Right Wrist Pitch）: -45度到+60度，仅无疆版本支持
+    27: [-75, 95, 30],     # 右腕关节翻滚 Right Wrist Roll）: -75度到+95度，仅无疆版本支持
 }
 # 运动超过范围则电机会断开连接，无法再被控制，可手动将电机复位到合理位置后重启机器人本体服务(注意确保重启时机器人是安全固定在移位机上的)
 
 # 电机ID列表，用于批量控制
-arm_MOTOR_IDS = [12]
+# arm_MOTOR_IDS = [11, 12, 13, 14, 15, 16, 17]
+arm_MOTOR_IDS = [21, 22, 23, 24, 25, 26, 27]
 
 import math
 
@@ -125,15 +126,18 @@ def degree_to_radian(degree):
     """
     度转换为弧度，1弧度 ≈ 57.3度，1度 ≈ 0.01745弧度
     """
-    return degree * math.pi / 180.0
+    d = degree
+    if abs(d) > 60:
+        d = 60 if d > 0 else -60
+    return d * math.pi / 180.0
 
 def radian_to_target_radian(radian):
     """
-    将最大弧度转换为目标弧度，暂定为最大弧度的三分之一
+    将最大弧度转换为目标弧度，暂定为最大弧度的四分之一
     
     :param radian: 电机的最大弧度
     """
-    return radian / 3
+    return radian # / 4
 
 class ArmMotorController(Node):
     """
@@ -295,7 +299,8 @@ class ArmMotorController(Node):
         # 为每个电机创建控制命令        
         for motor_id in arm_MOTOR_IDS:
             # 获取该电机的目标位置
-            motor_max_pos_degree = motor_angle_limits_dict[motor_id][1]
+            print(motor_angle_limits_dict[motor_id])
+            motor_max_pos_degree = motor_angle_limits_dict[motor_id][2]
             target_pos = radian_to_target_radian(degree_to_radian(motor_max_pos_degree))
             
             # 创建单个电机的位置命令
@@ -640,24 +645,24 @@ def main(args=None):
         elif mode == "position":
             # 执行位置模式
             controller.homing()  # 先回零
-            time.sleep(1)
+            time.sleep(3)
             controller.position_control_mode()
             
         elif mode == "impedance":
             # 执行阻抗模式
             controller.homing()  # 先回零
-            time.sleep(1)
+            time.sleep(3)
             controller.impedance_control_mode()
             
         elif mode == "velocity":
             # 执行速度模式
             controller.homing()  # 先回零
-            time.sleep(1)
+            time.sleep(3)
             controller.velocity_control_mode()
         
         elif mode == "zero":
             controller.homing()  # 这里只是示例，所以先回零，确保所有关节都在零位
-            time.sleep(1)
+            time.sleep(3)
             controller.homing()  # 这里只是示例，所以先回零，确保所有关节都在零位
             # 执行标零
             controller.set_zero()
