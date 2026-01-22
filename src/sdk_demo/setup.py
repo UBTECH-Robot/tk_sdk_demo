@@ -27,6 +27,8 @@ setup(
             'motor_status_demo = sdk_demo.5_motor_status_demo:main',
             'head_motor_control = sdk_demo.5_head_motor_control:main',
             'waist_motor_control = sdk_demo.6_waist_motor_control:main',
+            'arm_motor_control = sdk_demo.7_arm_motor_control:main',
+            'leg_motor_control = sdk_demo.8_leg_motor_control:main',
 
             'waist_control_demo = sdk_demo.5_2_1_waist_control_demo:main',
             'arm_status_demo = sdk_demo.6_1_1_arm_status_demo:main',
