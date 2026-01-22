@@ -1,39 +1,37 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-头部电机控制演示脚本
+腰部电机控制演示脚本
 
 功能说明：
-    本脚本演示了如何使用三种不同的控制模式来控制头部电机的运动
-    头部包含3个电机，电机ID分别为：1, 2, 3，运动范围：
-    - 1: -26度到+26度
-    - 2: -25度到+25度
-    - 3: -90度到+90度
-    运动超过范围则电机会断开连接，无法再被控制，可手动将电机复位到合理位置后重启 proc_manager 服务(注意确保重启时机器人是安全固定在移位机上的)
+    本脚本演示了如何使用三种不同的控制模式来控制腰部电机的运动
+    腰部包含1个电机，电机ID为：31，运动范围：
+    - 31: -170度到+170度
+    运动超过范围则电机会断开连接，无法再被控制，可手动将电机复位到合理位置后重启机器人本体服务(注意确保重启时机器人是安全固定在移位机上的)
 
-使用方法(要先确保机器人本体服务是启动着的)：
+使用方法(要先确保机器人本体服务是启动着的，但是不能启动运控服务，也就是手动关掉 proc_manager 服务后再执行 ros2 launch body_control body.launch.py)：
     执行位置控制模式示例（默认）：
-        ros2 run sdk_demo head_motor_control pos
+        ros2 run sdk_demo waist_motor_control pos
     
     执行力位混合控制模式示例：
-        ros2 run sdk_demo head_motor_control imp
+        ros2 run sdk_demo waist_motor_control imp
     
     执行速度控制模式示例：
-        ros2 run sdk_demo head_motor_control vel
+        ros2 run sdk_demo waist_motor_control vel
         对应命令行示例：
-        ros2 topic pub /head/cmd_vel bodyctrl_msgs/msg/CmdSetMotorSpeed "{cmds: [{name: 1, spd: -1, cur: 5.0 }]}" --once
+        ros2 topic pub /waist/cmd_vel bodyctrl_msgs/msg/CmdSetMotorSpeed "{cmds: [{name: 31, spd: -1, cur: 10.0 }]}" --once
         --once参数表示只发布一次消息，实测电机只会转动一下，然后停止。
     
     仅执行回零示例：
-        ros2 run sdk_demo head_motor_control home
+        ros2 run sdk_demo waist_motor_control home
     
     标零示例（实际应用中，标零接口必须配合标零工具使用！否则可能导致电机位置错误，影响机器人正常运行）：
-        ros2 run sdk_demo head_motor_control zero
+        ros2 run sdk_demo waist_motor_control zero
 
 控制模式说明：
 
     1. 位置模式（Position Control）
-       - 控制话题：/head/cmd_pos
+       - 控制话题：/waist/cmd_pos
        - 消息类型：bodyctrl_msgs/msg/CmdSetMotorPosition
        - 特点：指定目标位置和速度限制，电机会自动规划路径运动到目标位置
        - 应用：需要精确位置控制的场景
@@ -44,7 +42,7 @@
          * cur: 电流限制（安培）
 
     2. 力位混合模式（Impedance Control）
-       - 控制话题：/head/cmd_ctrl
+       - 控制话题：/waist/cmd_ctrl
        - 消息类型：bodyctrl_msgs/msg/CmdMotorCtrl
        - 特点：同时控制位置和力，可模拟弹性、阻尼等特性，适合与环境交互
        - 应用：需要与环境交互、实现合规运动的场景
@@ -57,7 +55,7 @@
          * tor: 目标扭矩（牛米）
 
     3. 速度模式（Velocity Control）
-       - 控制话题：/head/cmd_vel
+       - 控制话题：/waist/cmd_vel
        - 消息类型：bodyctrl_msgs/msg/CmdSetMotorSpeed
        - 特点：指定目标速度，电机会持续按该速度运动，不受位置限制
        - 应用：需要连续运动、速度控制的场景
@@ -84,30 +82,23 @@ from bodyctrl_msgs.msg import (
 import time
 import sys
 
-# 头部电机ID定义
-# 头部有3个电机，分别控制不同的自由度（如俯仰、左右转、滚转）
-HEAD_MOTOR_ID_1 = 1 # 头关节翻滚
-HEAD_MOTOR_ID_2 = 2 # 头关节俯仰
-HEAD_MOTOR_ID_3 = 3 # 头关节偏航
+# 腰部电机ID定义
+waist_MOTOR_ID_31 = 31 # 腰关节旋转
 
 # 电机ID列表，用于批量控制
-HEAD_MOTOR_IDS = [HEAD_MOTOR_ID_1, HEAD_MOTOR_ID_2, HEAD_MOTOR_ID_3]
+waist_MOTOR_IDS = [waist_MOTOR_ID_31]
 
 # 电机运动范围定义（弧度）
 # 转换说明：1弧度 ≈ 57.3度，1度 ≈ 0.01745弧度
 import math
-MOTOR_1_MAX = 26 * math.pi / 180  # 电机1: -26°到+26°，最大值一半 = 13° ≈ 0.227 rad
-MOTOR_2_MAX = 25 * math.pi / 180  # 电机2: -25°到+25°，最大值一半 = 12.5° ≈ 0.218 rad
-MOTOR_3_MAX = 90 * math.pi / 180  # 电机3: -90°到+90°，最大值一半 = 45° ≈ 0.785 rad
+MOTOR_31_MAX = 170 * math.pi / 180  # 电机31: -170°到+170°，最大值一半 = 85° ≈ 1.483 rad
 
 # 目标位置（运动到最大值的一半）
-MOTOR_1_TARGET = MOTOR_1_MAX / 2  # 电机1: 13° ≈ 0.227 rad
-MOTOR_2_TARGET = MOTOR_2_MAX / 2  # 电机2: 12.5° ≈ 0.218 rad
-MOTOR_3_TARGET = MOTOR_3_MAX / 2  # 电机3: 45° ≈ 0.785 rad
+MOTOR_31_TARGET = MOTOR_31_MAX / 2  # 电机31: 85° ≈ 1.483 rad
 
 # 控制参数定义
 VELOCITY_LIMIT = 1.0  # 速度限制（弧度/秒）
-CURRENT_LIMIT = 5.0  # 电流限制（安培）
+CURRENT_LIMIT = 10.0  # 电流限制（安培）
 
 # 力位混合模式的参数
 KP = 20.0  # 位置刚性系数 - 越大位置控制越硬
@@ -120,68 +111,66 @@ CONTROL_SPEED = 1.0  # 目标速度（弧度/秒，平缓速度）
 VELOCITY_MODE_DURATION = 5.0  # 速度模式持续时间（秒）- 防止电机无限运转
 VELOCITY_MODE_STOP_DURATION = 0.5  # 停止命令持续时间（秒）- 确保电机停止
 
-class HeadMotorController(Node):
+class WaistMotorController(Node):
     """
-    创建一个控制头部电机的节点，提供三种不同的电机控制模式
+    创建一个控制腰部电机的节点，提供三种不同的电机控制模式
     """
     
     def __init__(self):
         """
-        初始化头部电机控制节点
+        初始化腰部电机控制节点
         
         功能：
-            1. 调用父类构造函数，创建名为'head_motor_controller'的节点
+            1. 调用父类构造函数，创建名为'waist_motor_controller'的节点
             2. 创建三个发布者，分别发送三种不同控制模式的命令
             3. 记录当前电机位置（用于位置模式的相对运动）
         """
-        # 初始化节点，节点名称为'head_motor_controller'
-        super().__init__('head_motor_controller')
+        # 初始化节点，节点名称为'waist_motor_controller'
+        super().__init__('waist_motor_controller')
         
         # 创建位置模式命令发布者
-        # 发布到 /head/cmd_pos 话题，消息类型为 CmdSetMotorPosition
+        # 发布到 /waist/cmd_pos 话题，消息类型为 CmdSetMotorPosition
         self.pos_cmd_publisher = self.create_publisher(
             CmdSetMotorPosition,
-            '/head/cmd_pos',
+            '/waist/cmd_pos',
             10
         )
-        self.get_logger().info("✓ 位置模式发布者已创建（话题：/head/cmd_pos）")
+        self.get_logger().info("✓ 位置模式发布者已创建（话题：/waist/cmd_pos）")
         
         # 创建力位混合模式命令发布者
-        # 发布到 /head/cmd_ctrl 话题，消息类型为 CmdMotorCtrl
+        # 发布到 /waist/cmd_ctrl 话题，消息类型为 CmdMotorCtrl
         self.ctrl_cmd_publisher = self.create_publisher(
             CmdMotorCtrl,
-            '/head/cmd_ctrl',
+            '/waist/cmd_ctrl',
             10
         )
-        self.get_logger().info("✓ 力位混合模式发布者已创建（话题：/head/cmd_ctrl）")
+        self.get_logger().info("✓ 力位混合模式发布者已创建（话题：/waist/cmd_ctrl）")
         
         # 创建速度模式命令发布者
-        # 发布到 /head/cmd_vel 话题，消息类型为 CmdSetMotorSpeed
+        # 发布到 /waist/cmd_vel 话题，消息类型为 CmdSetMotorSpeed
         self.vel_cmd_publisher = self.create_publisher(
             CmdSetMotorSpeed,
-            '/head/cmd_vel',
+            '/waist/cmd_vel',
             10
         )
-        self.get_logger().info("✓ 速度模式发布者已创建（话题：/head/cmd_vel）")
+        self.get_logger().info("✓ 速度模式发布者已创建（话题：/waist/cmd_vel）")
         
         # 创建标零命令发布者（需要配合标零工具使用）
-        # 发布到 /head/cmd_set_zero 话题，用于将指定关节的当前位置标记为零位
+        # 发布到 /waist/cmd_set_zero 话题，用于将指定关节的当前位置标记为零位
         self.zero_cmd_publisher = self.create_publisher(
             String,
-            '/head/cmd_set_zero',
+            '/waist/cmd_set_zero',
             10
         )
-        self.get_logger().info("✓ 标零发布者已创建（话题：/head/cmd_set_zero）")
+        self.get_logger().info("✓ 标零发布者已创建（话题：/waist/cmd_set_zero）")
         
         # 记录各电机的当前位置（用于相对运动）
         self.motor_positions = {
-            HEAD_MOTOR_ID_1: 0.0,
-            HEAD_MOTOR_ID_2: 0.0,
-            HEAD_MOTOR_ID_3: 0.0
+            waist_MOTOR_ID_31: 0.0,
         }
         
         self.get_logger().info("=" * 50)
-        self.get_logger().info("头部电机控制节点已初始化完成")
+        self.get_logger().info("腰部电机控制节点已初始化完成")
         self.get_logger().info("=" * 50)
 
     def create_header(self):
@@ -236,7 +225,7 @@ class HeadMotorController(Node):
         msg.header = header
         
         # 为每个电机创建回零命令
-        for motor_id in HEAD_MOTOR_IDS:
+        for motor_id in waist_MOTOR_IDS:
             # 创建单个电机的位置命令
             cmd = SetMotorPosition()
             cmd.name = motor_id  # 电机ID
@@ -254,7 +243,7 @@ class HeadMotorController(Node):
         self.get_logger().info("✓ 回零命令已发送")
         
         # 更新内部位置记录
-        for motor_id in HEAD_MOTOR_IDS:
+        for motor_id in waist_MOTOR_IDS:
             self.motor_positions[motor_id] = 0.0
         
         self.get_logger().info("✓ 电机已回零")
@@ -265,7 +254,7 @@ class HeadMotorController(Node):
         位置控制模式演示
         
         功能：
-            演示如何使用位置模式控制头部电机
+            演示如何使用位置模式控制腰部电机
             
         控制原理：
             1. 指定目标位置
@@ -292,12 +281,10 @@ class HeadMotorController(Node):
         # 为每个电机创建控制命令
         # 目标位置为各电机最大值的一半
         target_positions = {
-            HEAD_MOTOR_ID_1: MOTOR_1_TARGET,
-            HEAD_MOTOR_ID_2: MOTOR_2_TARGET,
-            HEAD_MOTOR_ID_3: MOTOR_3_TARGET
+            waist_MOTOR_ID_31: MOTOR_31_TARGET,
         }
         
-        for motor_id in HEAD_MOTOR_IDS:
+        for motor_id in waist_MOTOR_IDS:
             # 获取该电机的目标位置
             target_pos = target_positions[motor_id]
             self.motor_positions[motor_id] = target_pos
@@ -327,7 +314,7 @@ class HeadMotorController(Node):
 
     def impedance_control_mode(self):
         """
-        力位混合模式演示
+        力位混合模式（力位混合控制）演示
         
         ===== 通俗理解 =====
         
@@ -365,7 +352,7 @@ class HeadMotorController(Node):
         
         ===== 功能说明 =====
         
-        演示如何使用力位混合模式控制头部电机
+        演示如何使用力位混合模式控制腰部电机
         
         • pos (目标位置)：期望电机运动到这个位置（弧度）
         • spd (目标速度)：期望电机以什么速度运动（0=静止，正值=正向旋转）
@@ -396,15 +383,13 @@ class HeadMotorController(Node):
         msg = CmdMotorCtrl()
         msg.header = header
         
-        # 为每个电机创建控制命令
-        # 目标位置为各电机最大值的一半
+        # 为电机创建控制命令
+        # 目标位置为最大值的一半
         target_positions = {
-            HEAD_MOTOR_ID_1: MOTOR_1_TARGET,
-            HEAD_MOTOR_ID_2: MOTOR_2_TARGET,
-            HEAD_MOTOR_ID_3: MOTOR_3_TARGET
+            waist_MOTOR_ID_31: MOTOR_31_TARGET,
         }
         
-        for motor_id in HEAD_MOTOR_IDS:
+        for motor_id in waist_MOTOR_IDS:
             # 获取该电机的目标位置
             target_pos = target_positions[motor_id]
             self.motor_positions[motor_id] = target_pos
@@ -449,13 +434,18 @@ class HeadMotorController(Node):
         
         • cur (电流限制)：限制电机用多大的力
           - 防止电机过载
-          - 保护电源系统        
-       
+          - 保护电源系统
+        
         ===== 本脚本的安全措施 =====
         
         ✓ 时间限制（VELOCITY_MODE_DURATION = 5秒）
           - 电机只运转 5 秒
           - 防止电机无限运转
+        
+        # ✓ 自动停止（发送速度为0的命令）
+        #   - 运转结束后立即停止电机
+        #   - 持续发送停止命令 0.5 秒确保停止
+        #   - 防止惯性继续转动
         
         ===== 实际使用建议 =====
         
@@ -494,7 +484,7 @@ class HeadMotorController(Node):
             
             # 为每个电机创建控制命令
             self.get_logger().info("\n发送运动命令...")
-            for i, motor_id in enumerate(HEAD_MOTOR_IDS):
+            for i, motor_id in enumerate(waist_MOTOR_IDS):
                 # 创建单个电机的速度命令
                 cmd = SetMotorSpeed()
                 cmd.name = motor_id  # 电机ID
@@ -537,7 +527,7 @@ class HeadMotorController(Node):
             
         标零工具说明：
             标零过程需要使用物理标零工具来完成：
-            1. 使用标零工具将机器人的头部关节固定在设计的零位
+            1. 使用标零工具将机器人的腰部关节固定在设计的零位
             2. 运行此标零方法，向驱动器发送标零命令
             3. 驱动器会在当前物理位置记录零点信息
                         
@@ -560,7 +550,7 @@ class HeadMotorController(Node):
         # 显示警告信息
         self.get_logger().warn("")
         self.get_logger().warn("⚠️  严重警告！执行标零前请确认：")
-        self.get_logger().warn("⚠️  1. 所有头部关节已使用标零工具物理固定在设计的零位")
+        self.get_logger().warn("⚠️  1. 腰部关节已使用标零工具物理固定在设计的零位")
         self.get_logger().warn("⚠️  2. 机器人已安全固定在移位机上")
         self.get_logger().warn("⚠️  3. 周围没有人员")
         self.get_logger().warn("⚠️  4. 所有其他控制程序已停止")
@@ -569,12 +559,12 @@ class HeadMotorController(Node):
         # 创建消息头
         header = self.create_header()
         
-        self.get_logger().info("发送标零命令到所有头部关节...")
+        self.get_logger().info("发送标零命令到所有腰部关节...")
         
         # 为每个电机发送标零命令
-        for motor_id in HEAD_MOTOR_IDS:
+        for motor_id in waist_MOTOR_IDS:
             # 创建标零命令消息（String 类型）
-            # 格式：电机ID作为字符串 （如 "1", "2", "3"）
+            # 格式：电机ID作为字符串 （如 "31"）
             cmd = String()
             cmd.data = str(motor_id)  # 电机ID 作为字符串
             
@@ -587,17 +577,14 @@ class HeadMotorController(Node):
         self.get_logger().warn("")
         self.get_logger().warn("✓ 标零命令已发送")
         self.get_logger().warn("✓ 驱动器现在应该在处理标零请求...")
-        self.get_logger().warn("✓ 请等待驱动器完成标零并手动重启 proc_manager 服务")
+        self.get_logger().warn("✓ 请等待驱动器完成标零并手动重启本体控制服务(ros2 launch body_control body.launch.py)")
         
         time.sleep(2)
 
 
 def main(args=None):
-    # 初始化ROS2的Python客户端库
     rclpy.init(args=args)
-    
-    # 创建头部电机控制节点实例
-    controller = HeadMotorController()
+    controller = WaistMotorController()
     
     try:
         # 给ROS2系统一些时间来初始化
@@ -651,24 +638,24 @@ def main(args=None):
         elif mode == "position":
             # 执行位置模式
             controller.homing()  # 先回零
-            time.sleep(1)
+            time.sleep(2)
             controller.position_control_mode()
             
         elif mode == "impedance":
             # 执行阻抗模式
             controller.homing()  # 先回零
-            time.sleep(1)
+            time.sleep(2)
             controller.impedance_control_mode()
             
         elif mode == "velocity":
             # 执行速度模式
             controller.homing()  # 先回零
-            time.sleep(1)
+            time.sleep(2)
             controller.velocity_control_mode()
         
         elif mode == "zero":
             controller.homing()  # 这里只是示例，所以先回零，确保所有关节都在零位
-            time.sleep(1)
+            time.sleep(2)
             controller.homing()  # 这里只是示例，所以先回零，确保所有关节都在零位
             # 执行标零
             controller.set_zero()
