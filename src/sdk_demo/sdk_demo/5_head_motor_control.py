@@ -173,13 +173,6 @@ class HeadMotorController(Node):
         )
         self.get_logger().info("✓ 标零发布者已创建（话题：/head/cmd_set_zero）")
         
-        # 记录各电机的当前位置（用于相对运动）
-        self.motor_positions = {
-            HEAD_MOTOR_ID_1: 0.0,
-            HEAD_MOTOR_ID_2: 0.0,
-            HEAD_MOTOR_ID_3: 0.0
-        }
-        
         self.get_logger().info("=" * 50)
         self.get_logger().info("头部电机控制节点已初始化完成")
         self.get_logger().info("=" * 50)
@@ -252,11 +245,6 @@ class HeadMotorController(Node):
         # 发送命令
         self.pos_cmd_publisher.publish(msg)
         self.get_logger().info("✓ 回零命令已发送")
-        
-        # 更新内部位置记录
-        for motor_id in HEAD_MOTOR_IDS:
-            self.motor_positions[motor_id] = 0.0
-        
         self.get_logger().info("✓ 电机已回零")
         time.sleep(1)  # 给电机足够的时间运动到零位
 
@@ -300,7 +288,6 @@ class HeadMotorController(Node):
         for motor_id in HEAD_MOTOR_IDS:
             # 获取该电机的目标位置
             target_pos = target_positions[motor_id]
-            self.motor_positions[motor_id] = target_pos
             
             # 创建单个电机的位置命令
             cmd = SetMotorPosition()
@@ -407,7 +394,6 @@ class HeadMotorController(Node):
         for motor_id in HEAD_MOTOR_IDS:
             # 获取该电机的目标位置
             target_pos = target_positions[motor_id]
-            self.motor_positions[motor_id] = target_pos
             
             # 创建单个电机的力位混合命令
             cmd = MotorCtrl()
