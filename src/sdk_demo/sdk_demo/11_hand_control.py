@@ -21,18 +21,18 @@
 ============================================================================
 
 【位置控制模式】
-    ros2 run sdk_demo hand_control_demo pos
+    ros2 run sdk_demo hand_control pos
 
 【力矩控制模式】
-    ros2 run sdk_demo hand_control_demo torque
+    ros2 run sdk_demo hand_control torque
 
 【速度控制模式】
-    ros2 run sdk_demo hand_control_demo vel
+    ros2 run sdk_demo hand_control vel
 
 【其他参数】
-  --target <百分比>：设置目标控制值，默认30.0%
-  --interval <秒数>：设置关节控制间隔，默认0.6秒
-  示例：ros2 run sdk_demo hand_control_demo pos --interval 0.5
+  --target <百分比>：设置目标控制值，默认0.30（30%）
+  --interval <秒数>：设置关节控制间隔，默认0.5秒
+  示例：ros2 run sdk_demo hand_control pos --target 0.1
 
 ============================================================================
 
@@ -64,15 +64,15 @@ class ControlConfig:
     
     属性：
         mode (ControlMode): 控制模式
-        target_value (float): 目标控制值（位置/力矩/速度百分比）
+        target_value (float): 目标控制值（位置/力矩/速度比例，范围0.0~1.0）
         interval (float): 发布间隔（秒）
     """
     
     def __init__(
         self,
         mode: ControlMode = ControlMode.POS,
-        target_value: float = 30.0,
-        interval: float = 0.6
+        target_value: float = 0.10,
+        interval: float = 0.2
     ):
         """初始化控制配置"""
         self.mode = mode
@@ -95,7 +95,8 @@ class InspireHandControllerDemo(Node):
     # ========== 常量定义 ==========
     
     # 关节ID顺序（与需求一致）
-    JOINT_ID_SEQUENCE = ["1", "2", "3", "4", "5", "6"]
+    JOINT_ID_SEQUENCE = ["1", "2", "3", "4", "5"]
+    # JOINT_ID_SEQUENCE = ["1", "2", "3", "4", "5", "6"]
 
     # 关节ID对应中文名称（用于日志）
     JOINT_NAME_MAP = {
@@ -141,7 +142,7 @@ class InspireHandControllerDemo(Node):
         self.get_logger().info(
             f"灵巧手控制节点已初始化\n"
             f"  控制模式：{self.CONTROL_MODE_DESCRIPTIONS.get(self.config.mode, '未知')}\n"
-            f"  目标值：{self.config.target_value:.1f}%\n"
+            f"  目标值：{self.config.target_value:.2f}\n"
             f"  关节间隔：{self.config.interval}秒"
         )
 
@@ -194,7 +195,7 @@ class InspireHandControllerDemo(Node):
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.name = [joint_id]
-        msg.pos = [self.config.target_value]
+        msg.position = [self.config.target_value]
 
         # 发布到左右手控制话题
         self.left_hand_publisher.publish(msg)
@@ -203,7 +204,7 @@ class InspireHandControllerDemo(Node):
         # 输出控制日志
         self.get_logger().info(
             f"[位置控制] 关节：{joint_name}(ID={joint_id})，"
-            f"目标位置：{self.config.target_value:.1f}%"
+            f"目标位置：{self.config.target_value}"
         )
 
     def _execute_torque_control(self, joint_id: str):
@@ -233,7 +234,7 @@ class InspireHandControllerDemo(Node):
         # 输出控制日志
         self.get_logger().info(
             f"[力矩控制] 关节：{joint_name}(ID={joint_id})，"
-            f"目标力矩：{self.config.target_value:.1f}%"
+            f"目标力矩：{self.config.target_value}"
         )
 
     def _execute_velocity_control(self, joint_id: str):
@@ -263,7 +264,7 @@ class InspireHandControllerDemo(Node):
         # 输出控制日志
         self.get_logger().info(
             f"[速度控制] 关节：{joint_name}(ID={joint_id})，"
-            f"目标速度：{self.config.target_value:.1f}%"
+            f"目标速度：{self.config.target_value}"
         )
 
     def add_new_control_mode(self, mode: ControlMode, description: str):
@@ -291,9 +292,9 @@ def main(args=None):
                     "支持位置、力矩、速度三种控制模式",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="示例用法：\n"
-               "  位置控制：ros2 run sdk_demo hand_control_demo pos\n"
-               "  力矩控制：ros2 run sdk_demo hand_control_demo torque --target 50.0\n"
-               "  速度控制：ros2 run sdk_demo hand_control_demo vel"
+               "  位置控制：ros2 run sdk_demo hand_control pos\n"
+               "  力矩控制：ros2 run sdk_demo hand_control torque --target 0.50\n"
+               "  速度控制：ros2 run sdk_demo hand_control vel"
     )
     
     # 位置参数：控制模式（必需）
@@ -310,16 +311,16 @@ def main(args=None):
     parser.add_argument(
         '--target',
         type=float,
-        default=30.0,
-        help="目标控制值百分比（默认：30.0%%）"
+        default=0.50,
+        help="目标控制值比例（范围0.0~1.0，默认：0.50）"
     )
     
     # 可选参数：发布间隔
     parser.add_argument(
         '--interval',
         type=float,
-        default=1.0,
-        help="关节控制间隔，单位秒（默认：1.0秒）"
+        default=0.3,
+        help="关节控制间隔，单位秒（默认：0.2秒）"
     )
     
     # 解析命令行参数
