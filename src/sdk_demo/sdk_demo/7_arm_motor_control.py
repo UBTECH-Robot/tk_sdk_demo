@@ -13,12 +13,8 @@
     执行力位混合控制模式示例：
         ros2 run sdk_demo arm_motor_control imp
     
-    执行速度控制模式示例：
+    执行速度控制模式示例（手臂只会运行3秒，停止后关节位置也不会固定，是不受力的状态，有可能受重力影响往下掉）：
         ros2 run sdk_demo arm_motor_control vel
-        对应命令行示例：
-        ros2 topic pub /arm/cmd_vel bodyctrl_msgs/msg/CmdSetMotorSpeed "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: 'arm'}, cmds: [{name: 13, spd: 0.5, cur: 5.0 }]}" --once
-        ros2 topic pub /arm/cmd_vel bodyctrl_msgs/msg/CmdSetMotorSpeed "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: 'arm'}, cmds: [{name: 13, spd: 0.0, cur: 5.0 }]}" --once
-        --once参数表示只发布一次消息，实测电机只会转动一下，然后停止。
     
     仅执行回零示例：
         ros2 run sdk_demo arm_motor_control home
@@ -81,7 +77,7 @@ import sys
 
 # 双臂包含14个电机（左右臂各7个电机），电机ID和运动范围：
 motor_angle_limits_dict = {
-    # 左臂电机，数组前两个元素是运动范围，第三个元素是设定的运动角度
+    # 左臂电机，数组前两个元素是运动范围，第三个元素是设定的位置模式和力位混合模式的目标角度
     11: [-170, 170, 20],   #（左肩关节俯仰 Left Shoulder Pitch）: -170度到+170度
     12: [-15, 150, 10],    #（左肩关节翻滚 Left Shoulder Roll）: -15度到+150度
     13: [-170, 170, 30],   #（左肩关节偏航 Left Shoulder Yaw）: -170度到+170度
@@ -104,13 +100,13 @@ motor_angle_limits_dict = {
 # 电机ID列表，用于批量控制
 # arm_MOTOR_IDS = [11, 12, 13, 14, 15, 16, 17]
 # arm_MOTOR_IDS = [21, 22, 23, 24, 25, 26, 27]
-# arm_MOTOR_IDS = [11, 12, 13, 14, 15, 16, 17, 21, 22, 23, 24, 25, 26, 27]
-arm_MOTOR_IDS = [13]
+arm_MOTOR_IDS = [11, 12, 13, 14, 15, 16, 17, 21, 22, 23, 24, 25, 26, 27]
+# arm_MOTOR_IDS = [11, 12, 13, 14, 15, 16]
 
 import math
 
 # 控制参数定义
-VELOCITY_LIMIT = 0.5  # 速度限制（弧度/秒）
+VELOCITY_LIMIT = 0.2  # 速度限制（弧度/秒）
 CURRENT_LIMIT = 5.0  # 电流限制（安培）
 
 # 力位混合模式的参数
@@ -118,11 +114,10 @@ KP = 20.0  # 位置刚性系数 - 越大位置控制越硬
 KD = 10.0  # 速度阻尼系数 - 越大阻尼效果越强
 
 # 速度模式的速度
-CONTROL_SPEED = 1.0  # 目标速度（弧度/秒，平缓速度）
+CONTROL_SPEED = 0.1  # 目标速度（弧度/秒，平缓速度）
 
 # 速度模式安全参数
-VELOCITY_MODE_DURATION = 4.0  # 速度模式持续时间（秒）- 防止电机无限运转
-VELOCITY_MODE_STOP_DURATION = 0.5  # 停止命令持续时间（秒）- 确保电机停止
+VELOCITY_MODE_DURATION = 3.0  # 速度模式持续时间（秒）- 防止电机无限运转
 
 def degree_to_radian(degree):
     """
@@ -431,8 +426,8 @@ class ArmMotorController(Node):
         速度模式就像给电机一个持续的转速命令，电机会一直按这个速度转动。
         
         • spd (目标速度)：告诉电机转多快
-          - spd=0.5：以0.5弧度/秒的速度正向旋转
-          - spd=-0.5：以0.5弧度/秒的速度反向旋转
+          - spd=0.1：以0.1弧度/秒的速度正向旋转
+          - spd=-0.1：以0.1弧度/秒的速度反向旋转
           - spd=0：停止转动
         
         • cur (电流限制)：限制电机用多大的力
@@ -441,8 +436,8 @@ class ArmMotorController(Node):
        
         ===== 本脚本的安全措施 =====
         
-        ✓ 时间限制（VELOCITY_MODE_DURATION = 4秒）
-          - 电机只运转 4 秒
+        ✓ 时间限制（VELOCITY_MODE_DURATION）
+          - 电机只运转指定时间（秒）
           - 防止电机无限运转
         
         ===== 实际使用建议 =====
@@ -457,10 +452,6 @@ class ArmMotorController(Node):
         - spd (速度)：正值逆时针运动，负值顺时针运动（单位：rad/s）
         - cur (电流限制)：限制电机的最大电流（单位：A）
         
-        应用场景：
-            - 需要短时间的连续旋转（3秒以内）
-            - 需要速度控制而不关心位置
-            - 演示和测试用途（生产环境需要更复杂的安全机制）
         """
         self.get_logger().info("")
         self.get_logger().info("=" * 50)
@@ -472,7 +463,20 @@ class ArmMotorController(Node):
         self.get_logger().warn("⚠️  请确保周围环境安全，远离旋转部件")
         self.get_logger().warn("⚠️  如发现异常，立即按 Ctrl+C 停止程序")
         
-        for i in range(int(VELOCITY_MODE_DURATION)):
+        spd = 0.0
+
+        running_start_time = None   # 记录进入恒速阶段的时间
+
+        while True:
+            if spd < CONTROL_SPEED:
+                spd = spd + 0.05
+            if spd >= CONTROL_SPEED:
+                spd = CONTROL_SPEED
+                if running_start_time is None:
+                    running_start_time = time.time()
+
+                if time.time() - running_start_time >= VELOCITY_MODE_DURATION:
+                    break
             # 创建消息头
             header = self.create_header()
             
@@ -487,8 +491,10 @@ class ArmMotorController(Node):
                 cmd = SetMotorSpeed()
                 cmd.name = motor_id  # 电机ID
                 
+                motor_pos_degree = motor_angle_limits_dict[motor_id][2]
+                
                 # 所有电机以相同平缓速度正向运动
-                cmd.spd = CONTROL_SPEED
+                cmd.spd = spd if motor_pos_degree >= 0 else -spd
                 direction = "正向"
                 
                 cmd.cur = CURRENT_LIMIT  # 电流限制（安培）
@@ -505,7 +511,7 @@ class ArmMotorController(Node):
             # 发送命令
             self.vel_cmd_publisher.publish(msg)
             self.get_logger().info("✓ 速度模式命令已发送")
-            time.sleep(1)  # 每秒发送一次命令以保持运动
+            time.sleep(0.005)
         
         # 实测发现，每发布一个速度模式命令电机会持续运动一段时间（实测约1秒），停止发送命令后电机就不会再转动
         self.get_logger().info("✓ 电机已停止")
