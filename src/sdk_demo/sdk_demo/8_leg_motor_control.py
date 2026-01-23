@@ -4,7 +4,7 @@
 双腿电机控制演示脚本
 
 功能说明：
-    本脚本演示了如何使用三种不同的控制模式来控制双腿电机的运动
+    本脚演示了如何使用三种不同的控制模式来控制双腿电机的运动
     
 使用方法(要先确保机器人本体服务是启动着的)：
     执行位置控制模式示例（默认）：
@@ -13,11 +13,8 @@
     执行力位混合控制模式示例：
         ros2 run sdk_demo leg_motor_control imp
     
-    执行速度控制模式示例：
+    执行速度控制模式示例（只会运行3秒，停止后关节位置也不会固定，是不受力的状态，有可能受重力影响往下掉）：
         ros2 run sdk_demo leg_motor_control vel
-        对应命令行示例：
-        ros2 topic pub /leg/cmd_vel bodyctrl_msgs/msg/CmdSetMotorSpeed "{cmds: [{name: 53, spd: -1, cur: 5.0 }]}" --once
-        --once参数表示只发布一次消息，实测电机只会转动一下，然后停止。
     
     仅执行回零示例：
         ros2 run sdk_demo leg_motor_control home
@@ -64,7 +61,6 @@
     4. 回零操作（Homing）
        - 功能：让所有电机回到零位（0弧度）
        - 应用：初始化电机位置，执行新的控制模式前的重置步骤
-       - 每个控制模式执行前都会自动调用回零操作
 """
 
 import rclpy
@@ -81,43 +77,42 @@ import sys
 
 # 双腿包含12个电机（左右腿各6个电机），电机ID和运动范围：
 motor_angle_limits_dict = {
-    # 左腿电机
-    51: [-45, 45],   # 左髋关节翻滚 Left Hip Roll: -45度到+45度
-    52: [-160, 120],    # 左髋关节俯仰 Left Hip Pitch: -160度到+120度
-    53: [-60, 60],   # 左髋关节偏航 Left Hip Yaw: -60度到+60度
-    54: [0, 137],    # 左膝关节俯仰 Left Knee Pitch: 0度到+137度
-    55: [-70, 30],   # 左踝关节俯仰 Left Ankle Pitch: -70度到+30度
-    56: [-30, 30],     # 左踝关节翻滚 Left Ankle Roll: -30度到+30度
+    # 左腿电机，数组前两个元素是运动范围，第三个元素是设定的位置模式和力位混合模式的目标角度
+    51: [-45, 45, 10],   # 左髋关节翻滚 Left Hip Roll: -45度到+45度
+    52: [-160, 120, -20],    # 左髋关节俯仰 Left Hip Pitch: -160度到+120度
+    53: [-60, 60, 20],   # 左髋关节偏航 Left Hip Yaw: -60度到+60度
+    54: [0, 137, 20],    # 左膝关节俯仰 Left Knee Pitch: 0度到+137度
+    55: [-70, 30, 15],   # 左踝关节俯仰 Left Ankle Pitch: -70度到+30度
+    56: [-30, 30, 15],     # 左踝关节翻滚 Left Ankle Roll: -30度到+30度
   
     # 右腿电机  
-    61: [45, -45],   # 右髋关节翻滚 Right Hip Roll: 45度到-45度
-    62: [-160, 120],    # 右髋关节俯仰 Right Hip Pitch: -160度到+120度
-    63: [-60, 60],   # 右髋关节偏航 Right Hip Yaw: -60度到+60度
-    64: [0, 137],    # 右膝关节俯仰 Right Knee Pitch: 0度到+137度
-    65: [-70, 30],   # 右踝关节俯仰 Right Ankle Pitch: -70度到+30度
-    66: [-30, 30],     # 右踝关节翻滚 Right Ankle Roll: -30度到+30度
+    61: [45, -45, -10],   # 右髋关节翻滚 Right Hip Roll: 45度到-45度
+    62: [-160, 120, -20],    # 右髋关节俯仰 Right Hip Pitch: -160度到+120度
+    63: [-60, 60, -20],   # 右髋关节偏航 Right Hip Yaw: -60度到+60度
+    64: [0, 137, 20],    # 右膝关节俯仰 Right Knee Pitch: 0度到+137度
+    65: [-70, 30, 15],   # 右踝关节俯仰 Right Ankle Pitch: -70度到+30度
+    66: [-30, 30, 15],     # 右踝关节翻滚 Right Ankle Roll: -30度到+30度
 }
 # 运动超过范围则电机会断开连接，无法再被控制，可手动将电机复位到合理位置后重启机器人本体服务(注意确保重启时机器人是安全固定在移位机上的)
 
 # 电机ID列表，用于批量控制
-leg_MOTOR_IDS = [51]
+leg_MOTOR_IDS = [51, 52, 53, 54, 55, 56, 61, 62, 63, 64, 65, 66]
 
 import math
 
 # 控制参数定义
-VELOCITY_LIMIT = 1.0  # 速度限制（弧度/秒）
+VELOCITY_LIMIT = 0.1  # 速度限制（弧度/秒）
 CURRENT_LIMIT = 10.0  # 电流限制（安培）
 
 # 力位混合模式的参数
-KP = 20.0  # 位置刚性系数 - 越大位置控制越硬
+KP = 40.0  # 位置刚性系数 - 越大位置控制越硬
 KD = 10.0  # 速度阻尼系数 - 越大阻尼效果越强
 
 # 速度模式的速度
-CONTROL_SPEED = 1.0  # 目标速度（弧度/秒，平缓速度）
+CONTROL_SPEED = 0.1  # 目标速度（弧度/秒，平缓速度）
 
 # 速度模式安全参数
-VELOCITY_MODE_DURATION = 5.0  # 速度模式持续时间（秒）- 防止电机无限运转
-VELOCITY_MODE_STOP_DURATION = 0.5  # 停止命令持续时间（秒）- 确保电机停止
+VELOCITY_MODE_DURATION = 3.0  # 速度模式持续时间（秒）- 防止电机无限运转
 
 def degree_to_radian(degree):
     """
@@ -128,15 +123,7 @@ def degree_to_radian(degree):
         d = 60 if d > 0 else -60
     return d * math.pi / 180.0
 
-def radian_to_target_radian(radian):
-    """
-    将最大弧度转换为目标弧度，暂定为最大弧度的三分之一
-    
-    :param radian: 电机的最大弧度
-    """
-    return radian / 3
-
-class ArmMotorController(Node):
+class LegMotorController(Node):
     """
     创建一个控制双腿电机的节点，提供三种不同的电机控制模式
     """
@@ -210,7 +197,7 @@ class ArmMotorController(Node):
         header = Header()
         header.stamp.sec = int(now.nanoseconds // 1_000_000_000)  # 转换为秒
         header.stamp.nanosec = int(now.nanoseconds % 1_000_000_000)  # 剩余纳秒
-        header.frame_id = 'head'  # 坐标系ID
+        header.frame_id = 'leg'  # 坐标系ID
         
         return header
 
@@ -262,7 +249,7 @@ class ArmMotorController(Node):
         self.pos_cmd_publisher.publish(msg)
         self.get_logger().info("✓ 回零命令已发送")
         
-        time.sleep(1)  # 给电机足够的时间运动到零位
+        time.sleep(3)  # 给电机足够的时间运动到零位
 
     def position_control_mode(self):
         """
@@ -277,9 +264,6 @@ class ArmMotorController(Node):
             3. 电机自动规划轨迹并运动到目标位置
             4. 达到目标位置后自动停止
             
-        应用场景：
-            - 需要精确位置控制
-            - 需要可重复的位置运动
         """
         self.get_logger().info("")
         self.get_logger().info("=" * 50)
@@ -296,8 +280,9 @@ class ArmMotorController(Node):
         # 为每个电机创建控制命令        
         for motor_id in leg_MOTOR_IDS:
             # 获取该电机的目标位置
-            motor_max_pos_degree = motor_angle_limits_dict[motor_id][1]
-            target_pos = radian_to_target_radian(degree_to_radian(motor_max_pos_degree))
+            # print(motor_angle_limits_dict[motor_id])
+            motor_pos_degree = motor_angle_limits_dict[motor_id][2]
+            target_pos = degree_to_radian(motor_pos_degree)
             
             # 创建单个电机的位置命令
             cmd = SetMotorPosition()
@@ -396,8 +381,8 @@ class ArmMotorController(Node):
         # 为每个电机创建控制命令        
         for motor_id in leg_MOTOR_IDS:
             # 获取该电机的目标位置            
-            motor_max_pos_degree = motor_angle_limits_dict[motor_id][1]
-            target_pos = radian_to_target_radian(degree_to_radian(motor_max_pos_degree))
+            motor_pos_degree = motor_angle_limits_dict[motor_id][2]
+            target_pos = degree_to_radian(motor_pos_degree)
             
             # 创建单个电机的力位混合命令
             cmd = MotorCtrl()
@@ -433,8 +418,8 @@ class ArmMotorController(Node):
         速度模式就像给电机一个持续的转速命令，电机会一直按这个速度转动。
         
         • spd (目标速度)：告诉电机转多快
-          - spd=0.5：以0.5弧度/秒的速度正向旋转
-          - spd=-0.5：以0.5弧度/秒的速度反向旋转
+          - spd=0.1：以0.1弧度/秒的速度正向旋转
+          - spd=-0.1：以0.1弧度/秒的速度反向旋转
           - spd=0：停止转动
         
         • cur (电流限制)：限制电机用多大的力
@@ -443,8 +428,8 @@ class ArmMotorController(Node):
        
         ===== 本脚本的安全措施 =====
         
-        ✓ 时间限制（VELOCITY_MODE_DURATION = 5秒）
-          - 电机只运转 5 秒
+        ✓ 时间限制（VELOCITY_MODE_DURATION）
+          - 电机只运转指定时间（秒）
           - 防止电机无限运转
         
         ===== 实际使用建议 =====
@@ -459,10 +444,6 @@ class ArmMotorController(Node):
         - spd (速度)：正值逆时针运动，负值顺时针运动（单位：rad/s）
         - cur (电流限制)：限制电机的最大电流（单位：A）
         
-        应用场景：
-            - 需要短时间的连续旋转（3秒以内）
-            - 需要速度控制而不关心位置
-            - 演示和测试用途（生产环境需要更复杂的安全机制）
         """
         self.get_logger().info("")
         self.get_logger().info("=" * 50)
@@ -474,7 +455,20 @@ class ArmMotorController(Node):
         self.get_logger().warn("⚠️  请确保周围环境安全，远离旋转部件")
         self.get_logger().warn("⚠️  如发现异常，立即按 Ctrl+C 停止程序")
         
-        for i in range(int(VELOCITY_MODE_DURATION)):
+        spd = 0.0
+
+        running_start_time = None   # 记录进入恒速阶段的时间
+
+        while True:
+            if spd < CONTROL_SPEED:
+                spd = spd + 0.05
+            if spd >= CONTROL_SPEED:
+                spd = CONTROL_SPEED
+                if running_start_time is None:
+                    running_start_time = time.time()
+
+                if time.time() - running_start_time >= VELOCITY_MODE_DURATION:
+                    break
             # 创建消息头
             header = self.create_header()
             
@@ -489,8 +483,10 @@ class ArmMotorController(Node):
                 cmd = SetMotorSpeed()
                 cmd.name = motor_id  # 电机ID
                 
+                motor_pos_degree = motor_angle_limits_dict[motor_id][2]
+                
                 # 所有电机以相同平缓速度正向运动
-                cmd.spd = CONTROL_SPEED
+                cmd.spd = spd if motor_pos_degree >= 0 else -spd
                 direction = "正向"
                 
                 cmd.cur = CURRENT_LIMIT  # 电流限制（安培）
@@ -507,10 +503,56 @@ class ArmMotorController(Node):
             # 发送命令
             self.vel_cmd_publisher.publish(msg)
             self.get_logger().info("✓ 速度模式命令已发送")
-            time.sleep(1)  # 每秒发送一次命令以保持运动
+            time.sleep(0.005)
         
-        # 实测发现，每发布一个速度模式命令电机会持续运动一段时间（实测约1秒），停止发送命令后电机就不会再转动
+        # 实测发现，每发布一个速度模式命令，电机会持续转动，即使停止发送命令，电机仍然持续转动，如需要停止，则必须发送 spd=0 的命令，这是和手臂电机和头部电机都不一样的
+        self.velocity_stop_control()
+        time.sleep(1)
+        self.velocity_stop_control()
+        # 为确保安全，连续发两次确保电机停止转动
+
         self.get_logger().info("✓ 电机已停止")
+
+    def velocity_stop_control(self):
+        """
+        速度模式停止 - 发送停止命令给所有电机
+        
+        功能：
+            向所有双腿电机发送 spd=0 的命令，使电机停止运动
+            
+        应用场景：
+            - 速度模式运动后的安全停止
+            - 紧急停止
+        """
+        self.get_logger().info("")
+        self.get_logger().info("=" * 50)
+        self.get_logger().info("【速度模式停止】发送停止命令")
+        self.get_logger().info("=" * 50)
+        
+        # 创建消息头
+        header = self.create_header()
+        
+        # 创建速度模式命令消息
+        msg = CmdSetMotorSpeed()
+        msg.header = header
+        
+        # 为每个电机创建停止命令
+        self.get_logger().info("发送停止命令...")
+        for motor_id in leg_MOTOR_IDS:
+            # 创建单个电机的停止命令
+            cmd = SetMotorSpeed()
+            cmd.name = motor_id  # 电机ID
+            cmd.spd = 0.0  # 速度为0，停止运动
+            cmd.cur = CURRENT_LIMIT  # 电流限制（安培）
+            
+            # 添加到消息数组
+            msg.cmds.append(cmd)
+            
+            self.get_logger().info(f"  电机 {motor_id}：发送停止命令（spd=0）")
+        
+        # 发送命令
+        self.vel_cmd_publisher.publish(msg)
+        self.get_logger().info("✓ 停止命令已发送")
 
     def set_zero(self):
         """
@@ -587,7 +629,7 @@ def main(args=None):
     rclpy.init(args=args)
     
     # 创建双腿电机控制节点实例
-    controller = ArmMotorController()
+    controller = LegMotorController()
     
     try:
         # 给ROS2系统一些时间来初始化
@@ -633,7 +675,34 @@ def main(args=None):
         controller.get_logger().info(f"即将执行：{mode_description.get(mode, '未知模式')}")
         controller.get_logger().info("=" * 60)
         
-        # 执行选定的模式
+        # ========== 安全确认 ==========
+        controller.get_logger().info("")
+        controller.get_logger().warn("【安全检查】开始执行前必须确认环境安全！")
+        controller.get_logger().warn("")
+        controller.get_logger().warn("⚠️  请检查以下事项：")
+        controller.get_logger().warn("    ✓ 机器人周围是否没有障碍物")
+        controller.get_logger().warn("    ✓ 是否远离旋转部件")
+        controller.get_logger().warn("    ✓ 是否有足够的工作空间")
+        controller.get_logger().warn("")
+        
+        # 获取用户确认
+        while True:
+            user_input = input("请确认机器人周围环境安全，是否继续执行？(y/n)：").strip().lower()
+            
+            # 检查用户输入
+            if user_input in ['是', 'yes', 'y', '1', 'ok', 'continue']:
+                controller.get_logger().info("✓ 用户确认环境安全，开始执行...")
+                break
+            elif user_input in ['否', 'no', 'n', '0', 'cancel', 'stop']:
+                controller.get_logger().warn("✗ 用户否定，取消执行")
+                controller.get_logger().warn("程序已退出")
+                controller.destroy_node()
+                rclpy.shutdown()
+                return
+            else:
+                controller.get_logger().warn(f"无效输入: '{user_input}'，请输入 'y' 或 'n'")
+        
+        # ========== 执行选定的模式 ==========
         if mode == "homing":
             # 仅执行回零
             controller.homing()
@@ -660,6 +729,8 @@ def main(args=None):
             controller.homing()  # 这里只是示例，所以先回零，确保所有关节都在零位
             time.sleep(3)
             controller.homing()  # 这里只是示例，所以先回零，确保所有关节都在零位
+            time.sleep(3)
+            controller.homing()  # 再次确认在零位
             # 执行标零
             controller.set_zero()
         

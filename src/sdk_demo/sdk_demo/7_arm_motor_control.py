@@ -4,7 +4,7 @@
 双臂电机控制演示脚本
 
 功能说明：
-    本脚本演示了如何使用三种不同的控制模式来控制双臂电机的运动
+    本脚演示了如何使用三种不同的控制模式来控制双臂电机的运动
     
 使用方法(要先确保机器人本体服务是启动着的)：
     执行位置控制模式示例（默认）：
@@ -17,6 +17,7 @@
         ros2 run sdk_demo arm_motor_control vel
     
     仅执行回零示例：
+        ros2 run sdk_demo arm_motor_control leg_safe
         ros2 run sdk_demo arm_motor_control home
     
     标零示例（实际应用中，标零接口必须配合标零工具使用！否则可能导致电机位置错误，影响机器人正常运行）：
@@ -106,7 +107,7 @@ arm_MOTOR_IDS = [11, 12, 13, 14, 15, 16, 17, 21, 22, 23, 24, 25, 26, 27]
 import math
 
 # 控制参数定义
-VELOCITY_LIMIT = 0.2  # 速度限制（弧度/秒）
+VELOCITY_LIMIT = 0.1  # 速度限制（弧度/秒）
 CURRENT_LIMIT = 5.0  # 电流限制（安培）
 
 # 力位混合模式的参数
@@ -119,6 +120,11 @@ CONTROL_SPEED = 0.1  # 目标速度（弧度/秒，平缓速度）
 # 速度模式安全参数
 VELOCITY_MODE_DURATION = 3.0  # 速度模式持续时间（秒）- 防止电机无限运转
 
+leg_MOTOR_IDS = [51, 52, 53, 54, 55, 56, 61, 62, 63, 64, 65, 66]
+motor_angle_limits_dict_leg = {
+    51: -5.8,
+    61: 5.8
+}
 def degree_to_radian(degree):
     """
     度转换为弧度，1弧度 ≈ 57.3度，1度 ≈ 0.01745弧度
@@ -180,6 +186,14 @@ class ArmMotorController(Node):
             10
         )
         self.get_logger().info("✓ 标零发布者已创建（话题：/arm/cmd_set_zero）")
+
+        # 为了手臂回零位时不被腿部挡住，要先让双腿电机在安全位置，因此也创建一个腿部位置模式发布者
+        self.leg_pos_cmd_publisher = self.create_publisher(
+            CmdSetMotorPosition,
+            '/leg/cmd_pos',
+            10
+        )
+        self.get_logger().info("✓ 双腿位置模式发布者已创建（话题：/leg/cmd_pos）")
                 
         self.get_logger().info("=" * 50)
         self.get_logger().info("双臂电机控制节点已初始化完成")
@@ -206,6 +220,43 @@ class ArmMotorController(Node):
         
         return header
 
+    def leg_safe(self):
+        """
+        双腿电机到安全位置
+        """
+        self.get_logger().info("")
+        self.get_logger().info("=" * 50)
+        self.get_logger().info("【双腿电机到安全位置】开始执行")
+        self.get_logger().info("=" * 50)
+        
+        # 创建消息头
+        header = self.create_header()
+        
+        # 创建位置模式命令消息
+        msg = CmdSetMotorPosition()
+        msg.header = header
+        
+        # 为每个电机创建回零命令
+        for motor_id in leg_MOTOR_IDS:
+            # 创建单个电机的位置命令
+            target_pos = degree_to_radian(motor_angle_limits_dict_leg.get(motor_id, 0))
+            cmd = SetMotorPosition()
+            cmd.name = motor_id  # 电机ID
+            cmd.pos = target_pos  # 目标位置（弧度）
+            cmd.spd = VELOCITY_LIMIT * 2  # 速度限制（弧度/秒）
+            cmd.cur = CURRENT_LIMIT * 2  # 电流限制（安培）
+            
+            # 添加到消息数组
+            msg.cmds.append(cmd)
+            
+            self.get_logger().info(f"  腿部电机 {motor_id}：运动到目标位置（{target_pos:.4f} rad）")
+        
+        # 发送命令
+        self.leg_pos_cmd_publisher.publish(msg)
+        self.get_logger().info("✓ 双腿安全位置命令已发送")
+        
+        time.sleep(3)  # 给电机足够的时间运动到零位
+
     def homing(self):
         """
         电机回零 - 让所有电机回到零位
@@ -224,6 +275,9 @@ class ArmMotorController(Node):
             - 执行新的控制模式前重置状态
             - 系统复位或故障恢复
         """
+        self.leg_safe()
+        self.leg_safe()
+
         self.get_logger().info("")
         self.get_logger().info("=" * 50)
         self.get_logger().info("【电机回零】开始执行")
@@ -514,7 +568,53 @@ class ArmMotorController(Node):
             time.sleep(0.005)
         
         # 实测发现，每发布一个速度模式命令电机会持续运动一段时间（实测约1秒），停止发送命令后电机就不会再转动
+        self.velocity_stop_control()
+        time.sleep(1)
+        self.velocity_stop_control()
+        # 为确保安全，连续发两次确保电机停止转动
+
         self.get_logger().info("✓ 电机已停止")
+
+    def velocity_stop_control(self):
+        """
+        速度模式停止 - 发送停止命令给所有电机
+        
+        功能：
+            向所有双腿电机发送 spd=0 的命令，使电机停止运动
+            
+        应用场景：
+            - 速度模式运动后的安全停止
+            - 紧急停止
+        """
+        self.get_logger().info("")
+        self.get_logger().info("=" * 50)
+        self.get_logger().info("【速度模式停止】发送停止命令")
+        self.get_logger().info("=" * 50)
+        
+        # 创建消息头
+        header = self.create_header()
+        
+        # 创建速度模式命令消息
+        msg = CmdSetMotorSpeed()
+        msg.header = header
+        
+        # 为每个电机创建停止命令
+        self.get_logger().info("发送停止命令...")
+        for motor_id in arm_MOTOR_IDS:
+            # 创建单个电机的停止命令
+            cmd = SetMotorSpeed()
+            cmd.name = motor_id  # 电机ID
+            cmd.spd = 0.0  # 速度为0，停止运动
+            cmd.cur = CURRENT_LIMIT  # 电流限制（安培）
+            
+            # 添加到消息数组
+            msg.cmds.append(cmd)
+            
+            self.get_logger().info(f"  电机 {motor_id}：发送停止命令（spd=0）")
+        
+        # 发送命令
+        self.vel_cmd_publisher.publish(msg)
+        self.get_logger().info("✓ 停止命令已发送")
 
     def set_zero(self):
         """
@@ -614,6 +714,9 @@ def main(args=None):
             # 仅回零
             elif arg in ["homing", "home", "h"]:
                 mode = "homing"
+            # 双腿安全位置
+            elif arg in ["leg_safe", "leg", "l"]:
+                mode = "leg_safe"
             # 标零
             elif arg in ["zero", "z"]:
                 mode = "zero"
@@ -669,6 +772,10 @@ def main(args=None):
             # 仅执行回零
             controller.homing()
             
+        elif mode == "leg_safe":
+            # 双腿电机到安全位置
+            controller.leg_safe()
+            time.sleep(3)
         elif mode == "position":
             # 执行位置模式
             controller.homing()  # 先回零
@@ -691,6 +798,8 @@ def main(args=None):
             controller.homing()  # 这里只是示例，所以先回零，确保所有关节都在零位
             time.sleep(3)
             controller.homing()  # 这里只是示例，所以先回零，确保所有关节都在零位
+            time.sleep(3)
+            controller.homing()  # 再次确认在零位
             # 执行标零
             controller.set_zero()
         

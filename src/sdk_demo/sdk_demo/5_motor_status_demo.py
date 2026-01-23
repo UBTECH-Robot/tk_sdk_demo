@@ -167,8 +167,8 @@ class MotorStatusMonitor(Node):
                         error_display = error_message
                     
                     # 以表格行形式打印数据
-                    print(f"{motor.name:<10} {motor.pos:<15.3f} {degree:<15.3f} {motor.speed:<15.3f} "
-                          f"{motor.current:<12.2f} {motor.temperature:<12.1f} {error_display:<20}")
+                    print(f"{motor.name:<10} {motor.pos:<18.3f} {degree:<18.3f} {motor.speed:<18.3f} "
+                          f"{motor.current:<18.2f} {motor.temperature:<18.1f} {error_display:<20}")
                 
                 # 表格底部分隔线
                 print("="*100)

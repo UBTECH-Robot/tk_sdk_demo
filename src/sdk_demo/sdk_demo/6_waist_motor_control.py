@@ -91,13 +91,13 @@ waist_MOTOR_IDS = [waist_MOTOR_ID_31]
 # 电机运动范围定义（弧度）
 # 转换说明：1弧度 ≈ 57.3度，1度 ≈ 0.01745弧度
 import math
-MOTOR_31_MAX = 170 * math.pi / 180  # 电机31: -170°到+170°，最大值一半 = 85° ≈ 1.483 rad
+MOTOR_31_MAX = 170 * math.pi / 180  # 电机31: -170°到+170°
 
-# 目标位置（运动到最大值的一半）
-MOTOR_31_TARGET = MOTOR_31_MAX / 2  # 电机31: 85° ≈ 1.483 rad
+# 目标位置
+MOTOR_31_TARGET = MOTOR_31_MAX / 4 
 
 # 控制参数定义
-VELOCITY_LIMIT = 1.0  # 速度限制（弧度/秒）
+VELOCITY_LIMIT = 0.4  # 速度限制（弧度/秒）
 CURRENT_LIMIT = 10.0  # 电流限制（安培）
 
 # 力位混合模式的参数
@@ -105,10 +105,10 @@ KP = 20.0  # 位置刚性系数 - 越大位置控制越硬
 KD = 10.0  # 速度阻尼系数 - 越大阻尼效果越强
 
 # 速度模式的速度
-CONTROL_SPEED = 1.0  # 目标速度（弧度/秒，平缓速度）
+CONTROL_SPEED = 0.1  # 目标速度（弧度/秒，平缓速度）
 
 # 速度模式安全参数
-VELOCITY_MODE_DURATION = 5.0  # 速度模式持续时间（秒）- 防止电机无限运转
+VELOCITY_MODE_DURATION = 2.0  # 速度模式持续时间（秒）- 防止电机无限运转
 VELOCITY_MODE_STOP_DURATION = 0.5  # 停止命令持续时间（秒）- 确保电机停止
 
 class WaistMotorController(Node):
@@ -163,12 +163,7 @@ class WaistMotorController(Node):
             10
         )
         self.get_logger().info("✓ 标零发布者已创建（话题：/waist/cmd_set_zero）")
-        
-        # 记录各电机的当前位置（用于相对运动）
-        self.motor_positions = {
-            waist_MOTOR_ID_31: 0.0,
-        }
-        
+                
         self.get_logger().info("=" * 50)
         self.get_logger().info("腰部电机控制节点已初始化完成")
         self.get_logger().info("=" * 50)
@@ -242,10 +237,6 @@ class WaistMotorController(Node):
         self.pos_cmd_publisher.publish(msg)
         self.get_logger().info("✓ 回零命令已发送")
         
-        # 更新内部位置记录
-        for motor_id in waist_MOTOR_IDS:
-            self.motor_positions[motor_id] = 0.0
-        
         self.get_logger().info("✓ 电机已回零")
         time.sleep(1)  # 给电机足够的时间运动到零位
 
@@ -279,7 +270,6 @@ class WaistMotorController(Node):
         msg.header = header
         
         # 为每个电机创建控制命令
-        # 目标位置为各电机最大值的一半
         target_positions = {
             waist_MOTOR_ID_31: MOTOR_31_TARGET,
         }
@@ -287,7 +277,6 @@ class WaistMotorController(Node):
         for motor_id in waist_MOTOR_IDS:
             # 获取该电机的目标位置
             target_pos = target_positions[motor_id]
-            self.motor_positions[motor_id] = target_pos
             
             # 创建单个电机的位置命令
             cmd = SetMotorPosition()
@@ -384,7 +373,6 @@ class WaistMotorController(Node):
         msg.header = header
         
         # 为电机创建控制命令
-        # 目标位置为最大值的一半
         target_positions = {
             waist_MOTOR_ID_31: MOTOR_31_TARGET,
         }
@@ -392,7 +380,6 @@ class WaistMotorController(Node):
         for motor_id in waist_MOTOR_IDS:
             # 获取该电机的目标位置
             target_pos = target_positions[motor_id]
-            self.motor_positions[motor_id] = target_pos
             
             # 创建单个电机的力位混合命令
             cmd = MotorCtrl()
@@ -474,7 +461,19 @@ class WaistMotorController(Node):
         self.get_logger().warn("⚠️  请确保周围环境安全，远离旋转部件")
         self.get_logger().warn("⚠️  如发现异常，立即按 Ctrl+C 停止程序")
         
-        for i in range(int(VELOCITY_MODE_DURATION)):
+        spd = 0.0
+        running_start_time = None   # 记录进入恒速阶段的时间
+
+        while True:
+            if spd < CONTROL_SPEED:
+                spd = spd + 0.05
+            if spd >= CONTROL_SPEED:
+                spd = CONTROL_SPEED
+                if running_start_time is None:
+                    running_start_time = time.time()
+
+                if time.time() - running_start_time >= VELOCITY_MODE_DURATION:
+                    break
             # 创建消息头
             header = self.create_header()
             
@@ -507,10 +506,56 @@ class WaistMotorController(Node):
             # 发送命令
             self.vel_cmd_publisher.publish(msg)
             self.get_logger().info("✓ 速度模式命令已发送")
-            time.sleep(1)  # 每秒发送一次命令以保持运动
+            time.sleep(0.005)
         
         # 实测发现，每发布一个速度模式命令电机会持续运动一段时间（实测约1秒），停止发送命令后电机就不会再转动
+        self.velocity_stop_control()
+        time.sleep(1)
+        self.velocity_stop_control()
+        # 为确保安全，连续发两次确保电机停止转动
+
         self.get_logger().info("✓ 电机已停止")
+
+    def velocity_stop_control(self):
+        """
+        速度模式停止 - 发送停止命令给所有电机
+        
+        功能：
+            向所有双腿电机发送 spd=0 的命令，使电机停止运动
+            
+        应用场景：
+            - 速度模式运动后的安全停止
+            - 紧急停止
+        """
+        self.get_logger().info("")
+        self.get_logger().info("=" * 50)
+        self.get_logger().info("【速度模式停止】发送停止命令")
+        self.get_logger().info("=" * 50)
+        
+        # 创建消息头
+        header = self.create_header()
+        
+        # 创建速度模式命令消息
+        msg = CmdSetMotorSpeed()
+        msg.header = header
+        
+        # 为每个电机创建停止命令
+        self.get_logger().info("发送停止命令...")
+        for motor_id in waist_MOTOR_IDS:
+            # 创建单个电机的停止命令
+            cmd = SetMotorSpeed()
+            cmd.name = motor_id  # 电机ID
+            cmd.spd = 0.0  # 速度为0，停止运动
+            cmd.cur = CURRENT_LIMIT  # 电流限制（安培）
+            
+            # 添加到消息数组
+            msg.cmds.append(cmd)
+            
+            self.get_logger().info(f"  电机 {motor_id}：发送停止命令（spd=0）")
+        
+        # 发送命令
+        self.vel_cmd_publisher.publish(msg)
+        self.get_logger().info("✓ 停止命令已发送")
 
     def set_zero(self):
         """
@@ -634,29 +679,35 @@ def main(args=None):
         if mode == "homing":
             # 仅执行回零
             controller.homing()
+            controller.homing() # 发送两次确保所有关节都在零位
             
         elif mode == "position":
             # 执行位置模式
             controller.homing()  # 先回零
-            time.sleep(2)
+            time.sleep(3)
+            controller.homing() # 发送两次确保所有关节都在零位
             controller.position_control_mode()
             
         elif mode == "impedance":
             # 执行阻抗模式
             controller.homing()  # 先回零
-            time.sleep(2)
+            time.sleep(3)
+            controller.homing() # 发送两次确保所有关节都在零位
             controller.impedance_control_mode()
             
         elif mode == "velocity":
             # 执行速度模式
             controller.homing()  # 先回零
-            time.sleep(2)
+            time.sleep(3)
+            controller.homing() # 发送两次确保所有关节都在零位
             controller.velocity_control_mode()
         
         elif mode == "zero":
             controller.homing()  # 这里只是示例，所以先回零，确保所有关节都在零位
-            time.sleep(2)
+            time.sleep(3)
             controller.homing()  # 这里只是示例，所以先回零，确保所有关节都在零位
+            time.sleep(3)
+            controller.homing() # 再次确保所有关节都在零位
             # 执行标零
             controller.set_zero()
         
@@ -665,9 +716,6 @@ def main(args=None):
         controller.get_logger().info("=" * 60)
         controller.get_logger().info("✓ 执行完成！")
         controller.get_logger().info("=" * 60)
-        
-        # 保持节点运行以便观察效果
-        time.sleep(2)
         
     except KeyboardInterrupt:
         # 捕获键盘中断（Ctrl+C），允许用户优雅地退出程序
