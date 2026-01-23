@@ -111,6 +111,21 @@ CONTROL_SPEED = 0.1  # 目标速度（弧度/秒，平缓速度）
 VELOCITY_MODE_DURATION = 2.0  # 速度模式持续时间（秒）- 防止电机无限运转
 VELOCITY_MODE_STOP_DURATION = 0.5  # 停止命令持续时间（秒）- 确保电机停止
 
+arm_MOTOR_IDS = [11, 12, 13, 14, 15, 16, 17, 21, 22, 23, 24, 25, 26, 27]
+motor_angle_limits_dict_arm = {
+    12: 5,
+    22: -5
+}
+
+def degree_to_radian(degree):
+    """
+    度转换为弧度，1弧度 ≈ 57.3度，1度 ≈ 0.01745弧度
+    """
+    d = degree
+    if abs(d) > 60:
+        d = 60 if d > 0 else -60
+    return d * math.pi / 180.0
+
 class WaistMotorController(Node):
     """
     创建一个控制腰部电机的节点，提供三种不同的电机控制模式
@@ -164,6 +179,14 @@ class WaistMotorController(Node):
         )
         self.get_logger().info("✓ 标零发布者已创建（话题：/waist/cmd_set_zero）")
                 
+        # 为了腰部转动时不被手指挡住，要先让双臂在安全位置，因此也创建一个双臂位置模式发布者
+        self.arm_pos_cmd_publisher = self.create_publisher(
+            CmdSetMotorPosition,
+            '/arm/cmd_pos',
+            10
+        )
+        self.get_logger().info("✓ 双臂位置模式发布者已创建（话题：/arm/cmd_pos）")
+
         self.get_logger().info("=" * 50)
         self.get_logger().info("腰部电机控制节点已初始化完成")
         self.get_logger().info("=" * 50)
@@ -188,6 +211,45 @@ class WaistMotorController(Node):
         header.frame_id = 'head'  # 坐标系ID
         
         return header
+
+    def arm_safe(self):
+        """
+        双臂电机到安全位置
+        """
+
+        self.get_logger().info("")
+        self.get_logger().info("=" * 50)
+        self.get_logger().info("【电机回零】开始执行")
+        self.get_logger().info("=" * 50)
+        
+        # 创建消息头
+        header = self.create_header()
+        
+        # 创建位置模式命令消息
+        msg = CmdSetMotorPosition()
+        msg.header = header
+        
+        # 为每个电机创建回零命令
+        for motor_id in arm_MOTOR_IDS:
+            # 创建单个电机的位置命令
+            target_pos = degree_to_radian(motor_angle_limits_dict_arm.get(motor_id, 0))
+
+            cmd = SetMotorPosition()
+            cmd.name = motor_id  # 电机ID
+            cmd.pos = target_pos  # 目标位置（弧度）
+            cmd.spd = VELOCITY_LIMIT / 2  # 速度限制（弧度/秒）
+            cmd.cur = CURRENT_LIMIT / 2 # 电流限制（安培）
+            
+            # 添加到消息数组
+            msg.cmds.append(cmd)
+            
+            self.get_logger().info(f"  双臂电机 {motor_id}：运动到零位（{target_pos:.4f} rad）")
+        
+        # 发送命令
+        self.arm_pos_cmd_publisher.publish(msg)
+        self.get_logger().info("✓ 回零命令已发送")
+        
+        time.sleep(1)  # 给电机足够的时间运动到零位
 
     def homing(self):
         """
@@ -652,6 +714,8 @@ def main(args=None):
             # 仅回零
             elif arg in ["homing", "home", "h"]:
                 mode = "homing"
+            elif arg in ["arm_safe", "arm"]:
+                mode = "arm_safe"
             # 标零
             elif arg in ["zero", "z"]:
                 mode = "zero"
@@ -675,12 +739,17 @@ def main(args=None):
         controller.get_logger().info(f"即将执行：{mode_description.get(mode, '未知模式')}")
         controller.get_logger().info("=" * 60)
         
+        controller.arm_safe()
         # 执行选定的模式
         if mode == "homing":
             # 仅执行回零
             controller.homing()
             controller.homing() # 发送两次确保所有关节都在零位
             
+        elif mode == "arm_safe":
+            # 让双臂到安全位置
+            controller.arm_safe()
+            time.sleep(3)
         elif mode == "position":
             # 执行位置模式
             controller.homing()  # 先回零
