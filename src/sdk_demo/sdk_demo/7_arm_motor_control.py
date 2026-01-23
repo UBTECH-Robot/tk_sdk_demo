@@ -16,7 +16,8 @@
     执行速度控制模式示例：
         ros2 run sdk_demo arm_motor_control vel
         对应命令行示例：
-        ros2 topic pub /arm/cmd_vel bodyctrl_msgs/msg/CmdSetMotorSpeed "{cmds: [{name: 13, spd: 0.5, cur: 5.0 }]}" --once
+        ros2 topic pub /arm/cmd_vel bodyctrl_msgs/msg/CmdSetMotorSpeed "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: 'arm'}, cmds: [{name: 13, spd: 0.5, cur: 5.0 }]}" --once
+        ros2 topic pub /arm/cmd_vel bodyctrl_msgs/msg/CmdSetMotorSpeed "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: 'arm'}, cmds: [{name: 13, spd: 0.0, cur: 5.0 }]}" --once
         --once参数表示只发布一次消息，实测电机只会转动一下，然后停止。
     
     仅执行回零示例：
@@ -64,7 +65,6 @@
     4. 回零操作（Homing）
        - 功能：让所有电机回到零位（0弧度）
        - 应用：初始化电机位置，执行新的控制模式前的重置步骤
-       - 每个控制模式执行前都会自动调用回零操作
 """
 
 import rclpy
@@ -132,14 +132,6 @@ def degree_to_radian(degree):
     if abs(d) > 60:
         d = 60 if d > 0 else -60
     return d * math.pi / 180.0
-
-def radian_to_target_radian(radian):
-    """
-    将最大弧度转换为目标弧度，暂定为最大弧度的四分之一
-    
-    :param radian: 电机的最大弧度
-    """
-    return radian # / 4
 
 class ArmMotorController(Node):
     """
@@ -302,8 +294,8 @@ class ArmMotorController(Node):
         for motor_id in arm_MOTOR_IDS:
             # 获取该电机的目标位置
             # print(motor_angle_limits_dict[motor_id])
-            motor_max_pos_degree = motor_angle_limits_dict[motor_id][2]
-            target_pos = radian_to_target_radian(degree_to_radian(motor_max_pos_degree))
+            motor_pos_degree = motor_angle_limits_dict[motor_id][2]
+            target_pos = degree_to_radian(motor_pos_degree)
             
             # 创建单个电机的位置命令
             cmd = SetMotorPosition()
@@ -402,8 +394,8 @@ class ArmMotorController(Node):
         # 为每个电机创建控制命令        
         for motor_id in arm_MOTOR_IDS:
             # 获取该电机的目标位置            
-            motor_max_pos_degree = motor_angle_limits_dict[motor_id][2]
-            target_pos = radian_to_target_radian(degree_to_radian(motor_max_pos_degree))
+            motor_pos_degree = motor_angle_limits_dict[motor_id][2]
+            target_pos = degree_to_radian(motor_pos_degree)
             
             # 创建单个电机的力位混合命令
             cmd = MotorCtrl()

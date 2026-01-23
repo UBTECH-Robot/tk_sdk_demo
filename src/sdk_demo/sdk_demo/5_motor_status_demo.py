@@ -119,7 +119,7 @@ class MotorStatusMonitor(Node):
         """
         电机状态消息回调函数
         
-        当接收到电机状态话题的消息时，本函数会被自动调用，解析消息中的电机状态数据，并打印各个电机的详细信息
+        当接收到电机状态话题的消息时，本函数会被自动调用，显示各电机的详细信息
         
         参数：
             msg (MotorStatusMsg): 接收到的电机状态消息对象
@@ -142,68 +142,44 @@ class MotorStatusMonitor(Node):
                 # 获取电机状态数组
                 motor_array = msg.status
                 
-                # 遍历数组中的每个电机，并打印其详细信息
-                for i, motor in enumerate(motor_array):
-                    # 打印电机索引和分隔线
-                    self.get_logger().info(f"========== 【电机{motor.name}】 ==========")
-                    
-                    # 打印电机名称/ID
-                    self.get_logger().info(f"  电机ID: {motor.name}")
-                    
-                    # 打印电机位置
-                    # 位置值保留3位小数，单位为弧度
-                    self.get_logger().info(f"  位置: {motor.pos:.3f} rad")
+                # 只有当有电机数据时才打印表头
+                if not motor_array:
+                    return
+                
+                # ========== 打印表格标题（仅打印一次）==========
+                print("\n" + "="*100)
+                print(f"{'电机ID':<10} {'位置(rad)':<15} {'位置(deg)':<15} {'速度(rad/s)':<15} "
+                      f"{'电流(A)':<12} {'温度(℃)':<12} {'错误信息':<20}")
+                print("-"*100)
+                
+                # ========== 遍历各电机，以表格行形式打印数据 ==========
+                for motor in motor_array:
+                    # 将弧度转换为角度
                     degree = radians_to_degrees(motor.pos)
-                    self.get_logger().info(f"  位置: {degree:.3f} deg")
                     
-                    # 打印电机速度
-                    # 速度值保留3位小数，单位为弧度每秒
-                    self.get_logger().info(f"  速度: {motor.speed:.3f} rad/s")
+                    # 获取错误说明
+                    error_message = ERROR_CODE_MAP.get(motor.error, "未知错误")
                     
-                    # 打印电机电流
-                    # 电流值保留2位小数，单位为安培
-                    self.get_logger().info(f"  电流: {motor.current:.2f} A")
+                    # 如果有错误，添加警告标记
+                    if motor.error != 0:
+                        error_display = f"⚠️ {error_message}"
+                    else:
+                        error_display = error_message
                     
-                    # 打印电机温度
-                    # 温度值保留1位小数，单位为摄氏度
-                    self.get_logger().info(f"  温度: {motor.temperature:.1f}℃")
-                    
-                    # 打印错误码
-                    self.get_logger().info(f"  错误码: {motor.error}")
-                    
-                    # 解析并打印错误码的含义
-                    self.parse_error_code(motor.error)
-                    
+                    # 以表格行形式打印数据
+                    print(f"{motor.name:<10} {motor.pos:<15.3f} {degree:<15.3f} {motor.speed:<15.3f} "
+                          f"{motor.current:<12.2f} {motor.temperature:<12.1f} {error_display:<20}")
+                
+                # 表格底部分隔线
+                print("="*100)
+                
             else:
                 # 备用处理方式：如果消息格式不符合预期
-                self.get_logger().warn("接收到的消息格式不符合预期，缺少status字段")
+                print("接收到的消息格式不符合预期，缺少status字段")
                 
         except Exception as e:
             # 捕获并打印异常信息
             self.get_logger().error(f"处理电机状态消息时出错: {str(e)}")
-
-    def parse_error_code(self, error_code: int):
-        """
-        解析并打印错误代码的含义
-        
-        参数：
-            error_code (int): 电机错误代码
-            
-        功能：
-            将数字错误码转换为易读的错误说明，并根据错误类型选择日志级别
-            - 错误码为0表示无错误，使用info级别日志
-            - 其他错误码使用warn级别日志
-        """
-        # 从错误码字典中查找对应的错误说明
-        error_message = ERROR_CODE_MAP.get(error_code, "未知错误码")
-        
-        if error_code == 0:
-            # 无错误，使用info级别日志
-            self.get_logger().info(f"  错误说明: {error_message}")
-        else:
-            # 有错误，使用warn级别日志进行警告
-            self.get_logger().warn(f"  ⚠️ 错误说明: {error_message}")
-
 
 def main(args=None):
     """
