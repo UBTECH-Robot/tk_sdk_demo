@@ -21,6 +21,7 @@
        ros2 run sdk_demo motor_status_demo head
 """
 
+import math
 import rclpy
 from rclpy.node import Node
 import sys
@@ -56,6 +57,17 @@ ERROR_CODE_MAP = {
     33073: "关节位置超限"  # 关节运动超出允许范围
 }
 
+def radians_to_degrees(radians: float) -> float:
+    """
+    将弧度转换为角度
+    
+    参数：
+        radians (float): 以弧度表示的角度值
+
+    返回：
+        float: 以度表示的角度值
+    """
+    return radians * (180.0 / math.pi)
 
 class MotorStatusMonitor(Node):
     """
@@ -141,6 +153,8 @@ class MotorStatusMonitor(Node):
                     # 打印电机位置
                     # 位置值保留3位小数，单位为弧度
                     self.get_logger().info(f"  位置: {motor.pos:.3f} rad")
+                    degree = radians_to_degrees(motor.pos)
+                    self.get_logger().info(f"  位置: {degree:.3f} deg")
                     
                     # 打印电机速度
                     # 速度值保留3位小数，单位为弧度每秒

@@ -16,7 +16,7 @@
     执行速度控制模式示例：
         ros2 run sdk_demo arm_motor_control vel
         对应命令行示例：
-        ros2 topic pub /arm/cmd_vel bodyctrl_msgs/msg/CmdSetMotorSpeed "{cmds: [{name: 14, spd: -1, cur: 5.0 }]}" --once
+        ros2 topic pub /arm/cmd_vel bodyctrl_msgs/msg/CmdSetMotorSpeed "{cmds: [{name: 13, spd: 0.5, cur: 5.0 }]}" --once
         --once参数表示只发布一次消息，实测电机只会转动一下，然后停止。
     
     仅执行回零示例：
@@ -81,21 +81,21 @@ import sys
 
 # 双臂包含14个电机（左右臂各7个电机），电机ID和运动范围：
 motor_angle_limits_dict = {
-    # 左臂电机
-    11: [-170, 170, 10],   #（左肩关节俯仰 Left Shoulder Pitch）: -170度到+170度
+    # 左臂电机，数组前两个元素是运动范围，第三个元素是设定的运动角度
+    11: [-170, 170, 20],   #（左肩关节俯仰 Left Shoulder Pitch）: -170度到+170度
     12: [-15, 150, 10],    #（左肩关节翻滚 Left Shoulder Roll）: -15度到+150度
     13: [-170, 170, 30],   #（左肩关节偏航 Left Shoulder Yaw）: -170度到+170度
-    14: [15, -150, -30],    #（左肘关节俯仰 Left Elbow Pitch）: +15度到-150度
-    15: [-170, 170, 40],   #（左腕关节偏航 Left Wrist Yaw）: -170度到+170度，仅无疆版本支持
+    14: [15, -150, -40],    #（左肘关节俯仰 Left Elbow Pitch）: +15度到-150度
+    15: [-170, 170, 30],   #（左腕关节偏航 Left Wrist Yaw）: -170度到+170度，仅无疆版本支持
     16: [60, -45, -20],     #（左腕关节俯仰 Left Wrist Pitch）: -45度到+60度，仅无疆版本支持
     17: [75, -95, -30],     #（左腕关节翻滚 Left Wrist Roll）: -95度到+75度，仅无疆版本支持
   
     # 右臂电机  
-    21: [-170, 170, 10],   # 右肩关节俯仰 Right Shoulder Pitch）: -170度到+170度
+    21: [-170, 170, 20],   # 右肩关节俯仰 Right Shoulder Pitch）: -170度到+170度
     22: [15, -150, -10],    # 右肩关节翻滚 Right Shoulder Roll）: +15度到-150度
-    23: [-170, 170, 30],   # 右肩关节偏航 Right Shoulder Yaw）: -170度到+170度
-    24: [15, -150, -30],    # 右肘关节俯仰 Right Elbow Pitch）: +15度到-150度
-    25: [-170, 170, 40],   # 右腕关节偏航 Right Wrist Yaw）: -170度到+170度，仅无疆版本支持
+    23: [-170, 170, -30],   # 右肩关节偏航 Right Shoulder Yaw）: -170度到+170度
+    24: [15, -150, -40],    # 右肘关节俯仰 Right Elbow Pitch）: +15度到-150度
+    25: [-170, 170, -30],   # 右腕关节偏航 Right Wrist Yaw）: -170度到+170度，仅无疆版本支持
     26: [60, -45, -20],     # 右腕关节俯仰 Right Wrist Pitch）: -45度到+60度，仅无疆版本支持
     27: [-75, 95, 30],     # 右腕关节翻滚 Right Wrist Roll）: -75度到+95度，仅无疆版本支持
 }
@@ -103,12 +103,14 @@ motor_angle_limits_dict = {
 
 # 电机ID列表，用于批量控制
 # arm_MOTOR_IDS = [11, 12, 13, 14, 15, 16, 17]
-arm_MOTOR_IDS = [21, 22, 23, 24, 25, 26, 27]
+# arm_MOTOR_IDS = [21, 22, 23, 24, 25, 26, 27]
+# arm_MOTOR_IDS = [11, 12, 13, 14, 15, 16, 17, 21, 22, 23, 24, 25, 26, 27]
+arm_MOTOR_IDS = [13]
 
 import math
 
 # 控制参数定义
-VELOCITY_LIMIT = 1.0  # 速度限制（弧度/秒）
+VELOCITY_LIMIT = 0.5  # 速度限制（弧度/秒）
 CURRENT_LIMIT = 5.0  # 电流限制（安培）
 
 # 力位混合模式的参数
@@ -119,7 +121,7 @@ KD = 10.0  # 速度阻尼系数 - 越大阻尼效果越强
 CONTROL_SPEED = 1.0  # 目标速度（弧度/秒，平缓速度）
 
 # 速度模式安全参数
-VELOCITY_MODE_DURATION = 5.0  # 速度模式持续时间（秒）- 防止电机无限运转
+VELOCITY_MODE_DURATION = 4.0  # 速度模式持续时间（秒）- 防止电机无限运转
 VELOCITY_MODE_STOP_DURATION = 0.5  # 停止命令持续时间（秒）- 确保电机停止
 
 def degree_to_radian(degree):
@@ -213,7 +215,7 @@ class ArmMotorController(Node):
         header = Header()
         header.stamp.sec = int(now.nanoseconds // 1_000_000_000)  # 转换为秒
         header.stamp.nanosec = int(now.nanoseconds % 1_000_000_000)  # 剩余纳秒
-        header.frame_id = 'head'  # 坐标系ID
+        header.frame_id = 'arm'  # 坐标系ID
         
         return header
 
@@ -299,7 +301,7 @@ class ArmMotorController(Node):
         # 为每个电机创建控制命令        
         for motor_id in arm_MOTOR_IDS:
             # 获取该电机的目标位置
-            print(motor_angle_limits_dict[motor_id])
+            # print(motor_angle_limits_dict[motor_id])
             motor_max_pos_degree = motor_angle_limits_dict[motor_id][2]
             target_pos = radian_to_target_radian(degree_to_radian(motor_max_pos_degree))
             
@@ -400,7 +402,7 @@ class ArmMotorController(Node):
         # 为每个电机创建控制命令        
         for motor_id in arm_MOTOR_IDS:
             # 获取该电机的目标位置            
-            motor_max_pos_degree = motor_angle_limits_dict[motor_id][1]
+            motor_max_pos_degree = motor_angle_limits_dict[motor_id][2]
             target_pos = radian_to_target_radian(degree_to_radian(motor_max_pos_degree))
             
             # 创建单个电机的力位混合命令
@@ -447,8 +449,8 @@ class ArmMotorController(Node):
        
         ===== 本脚本的安全措施 =====
         
-        ✓ 时间限制（VELOCITY_MODE_DURATION = 5秒）
-          - 电机只运转 5 秒
+        ✓ 时间限制（VELOCITY_MODE_DURATION = 4秒）
+          - 电机只运转 4 秒
           - 防止电机无限运转
         
         ===== 实际使用建议 =====
