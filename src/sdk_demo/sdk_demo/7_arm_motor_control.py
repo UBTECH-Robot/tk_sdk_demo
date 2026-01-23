@@ -631,7 +631,34 @@ def main(args=None):
         controller.get_logger().info(f"即将执行：{mode_description.get(mode, '未知模式')}")
         controller.get_logger().info("=" * 60)
         
-        # 执行选定的模式
+        # ========== 安全确认 ==========
+        controller.get_logger().info("")
+        controller.get_logger().warn("【安全检查】开始执行前必须确认环境安全！")
+        controller.get_logger().warn("")
+        controller.get_logger().warn("⚠️  请检查以下事项：")
+        controller.get_logger().warn("    ✓ 机器人周围是否没有障碍物")
+        controller.get_logger().warn("    ✓ 是否远离旋转部件")
+        controller.get_logger().warn("    ✓ 是否有足够的工作空间")
+        controller.get_logger().warn("")
+        
+        # 获取用户确认
+        while True:
+            user_input = input("请确认机器人周围环境安全，是否继续执行？(y/n)：").strip().lower()
+            
+            # 检查用户输入
+            if user_input in ['是', 'yes', 'y', '1', 'ok', 'continue']:
+                controller.get_logger().info("✓ 用户确认环境安全，开始执行...")
+                break
+            elif user_input in ['否', 'no', 'n', '0', 'cancel', 'stop']:
+                controller.get_logger().warn("✗ 用户否定，取消执行")
+                controller.get_logger().warn("程序已退出")
+                controller.destroy_node()
+                rclpy.shutdown()
+                return
+            else:
+                controller.get_logger().warn(f"无效输入: '{user_input}'，请输入 'y' 或 'n'")
+        
+        # ========== 执行选定的模式 ==========
         if mode == "homing":
             # 仅执行回零
             controller.homing()
