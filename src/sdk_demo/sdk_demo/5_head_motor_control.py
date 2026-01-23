@@ -466,7 +466,7 @@ class HeadMotorController(Node):
 
         while True:
             if spd < CONTROL_SPEED:
-                spd = spd + 0.05
+                spd = spd + 0.05 # 速度模式需要速度从0开始逐步增加，直到达到设定速度，速度跳变太大会给人感觉电机抖动
             if spd >= CONTROL_SPEED:
                 spd = CONTROL_SPEED
                 if running_start_time is None:

@@ -104,7 +104,7 @@ class InspireHandStatusMonitor(Node):
             return
         
         # 输出各关节的详细信息
-        print(f"{'关节ID':<8} {'位置(%)':<12} {'速度(%)':<12} {'力反馈(%)':<12} {'关节名称'}")
+        print(f"{'关节ID':<8} {'位置':<12} {'速度':<12} {'力反馈':<12} {'关节名称'}")
         print("-" * 80)
         
         for i in range(num_joints):
@@ -123,7 +123,7 @@ class InspireHandStatusMonitor(Node):
             effort = msg.effort[i] if i < len(msg.effort) else 0.0
             
             # 格式化输出
-            print(f"{joint_id:<4} {position:>10.2f}% {velocity:>12.2f}% {effort:>12.2f}% {joint_name:>10}")
+            print(f"{joint_id:<4} {position:>10.5f} {velocity:>12.5f} {effort:>12.5f} {joint_name:>10}")
         
         print("=" * 80)
 
