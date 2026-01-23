@@ -17,7 +17,6 @@
         ros2 run sdk_demo arm_motor_control vel
     
     仅执行回零示例：
-        ros2 run sdk_demo arm_motor_control leg_safe
         ros2 run sdk_demo arm_motor_control home
     
     标零示例（实际应用中，标零接口必须配合标零工具使用！否则可能导致电机位置错误，影响机器人正常运行）：
