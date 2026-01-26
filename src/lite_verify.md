@@ -246,3 +246,65 @@ ros2 topic pub /arm/cmd_current bodyctrl_msgs/CmdSetMotorCurTor "header: stamp: 
 ❌yaml.scanner.ScannerError: mapping values are not allowed here
   in "<unicode string>", line 1, column 14:
     header: stamp: sec: 1750403193 nanosec: 0 fra ...
+
+
+ros2 service call /inspire_hand/set_force/right_hand bodyctrl_msgs/srv/SetForce "{force0_ratio: 0.1, force1_ratio: 0.0, force2_ratio: 0.0, force3_ratio: 0.0, force4_ratio: 0.0, force5_ratio: 0.0}"
+
+
+灵巧手手指关节定义如下：
+uint16 MOTOR_FINGER_LITTLE = 1,        #little finger   小指
+uint16 MOTOR_FINGER_RING = 2,          #ring finger   无名指
+uint16 MOTOR_FINGER_MIDDLE = 3,        #middle finger   中指
+uint16 MOTOR_FINGER_FORE = 4,          #Fore finger   食指
+uint16 MOTOR_FINGER_THUMB_BEND = 5,    #thumb bend  拇指弯曲
+uint16 MOTOR_FINGER_THUMB_ROTATION = 6,#thumb rotation  拇指旋转
+
+控制手指各关节角度的topic：
+/inspire_hand/ctrl/left_hand
+类型：
+sensor_msgs/msg/JointState
+
+控制手指各关节角度的service：
+/inspire_hand/set_angle_flexible/left_hand
+类型：
+bodyctrl_msgs/srv/SetAngleFlexible
+定义：
+string[] name
+float32[] angle_ratio
+---
+bool angle_accepted
+
+控制手指各关节力矩的service：
+/inspire_hand/set_force/left_hand
+类型：
+bodyctrl_msgs/srv/SetForce
+定义：
+float32 force0_ratio
+float32 force1_ratio
+float32 force2_ratio
+float32 force3_ratio
+float32 force4_ratio
+float32 force5_ratio
+---
+bool force_accepted
+
+控制手指各关节速度的service：
+/inspire_hand/set_speed/left_hand
+类型：
+bodyctrl_msgs/srv/SetSpeed
+定义：
+float32 speed0_ratio
+float32 speed1_ratio
+float32 speed2_ratio
+float32 speed3_ratio
+float32 speed4_ratio
+float32 speed5_ratio
+---
+bool speed_accepted
+
+状态获取接口：
+/inspire_hand/state/left_hand
+类型：
+sensor_msgs/msg/JointState
+
+如何验证 控制手指各关节力矩的service 是否生效？这个service调用后应该有什么现象？

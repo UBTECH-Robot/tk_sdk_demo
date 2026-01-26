@@ -2,89 +2,61 @@
 # -*- coding: utf-8 -*-
 
 """
-灵巧手多模式控制节点 - ROS2版本
+灵巧手多模式控制节点
 
 功能说明：
-1. 通过ROS2话题控制左右手灵巧手。
-2. 支持多种控制模式：位置控制、力矩控制、速度控制。
+1. 通过ROS2话题和服务控制左右手灵巧手。
+2. 支持同时进行位置、力矩、速度控制。
 3. 依次控制每个手指（关节ID 1~6）运动到目标状态。
-4. 控制顺序为：小指→无名指→中指→食指→拇指弯曲→拇指旋转。
 
-控制话题：
-  - /inspire_hand/ctrl/left_hand  - 左手控制
-  - /inspire_hand/ctrl/right_hand - 右手控制
-
-话题数据类型：sensor_msgs/JointState
+控制话题和服务：
+  - /inspire_hand/ctrl/left_hand  - 左手位置控制话题
+  - /inspire_hand/ctrl/right_hand - 右手位置控制话题
+  - /inspire_hand/set_force/left_hand  - 左手力矩控制服务
+  - /inspire_hand/set_force/right_hand - 右手力矩控制服务
+  - /inspire_hand/set_speed/left_hand  - 左手速度控制服务
+  - /inspire_hand/set_speed/right_hand - 右手速度控制服务
+  - /inspire_hand/set_clear_error/left_hand  - 左手清除错误服务
+  - /inspire_hand/set_clear_error/right_hand - 右手清除错误服务
 
 ============================================================================
-使用说明 - ROS2命令调用
+使用说明
 ============================================================================
 
-【位置控制模式】
-    ros2 run sdk_demo hand_control pos
+【仅位置控制】
+    ros2 run sdk_demo hand_control --pos 0.8
+    
+【位置和力矩控制】
+    ros2 run sdk_demo hand_control --pos 0.6 --tor 0.5
 
-【力矩控制模式】
-    ros2 run sdk_demo hand_control torque
+【位置、力矩、速度控制】
+    ros2 run sdk_demo hand_control --pos 0.5 --tor 0.1 --spd 0.1
 
-【速度控制模式】
-    ros2 run sdk_demo hand_control vel
+【清除错误】
+    ros2 run sdk_demo hand_control --clear_error
 
-【其他参数】
-  --target <百分比>：设置目标控制值，默认0.30（30%）
-  --interval <秒数>：设置关节控制间隔，默认0.5秒
-  示例：ros2 run sdk_demo hand_control pos --target 0.1
-
+【参数说明】
+  --pos <值>：手指位置，取值范围 0.0~1.0
+  --tor <值>：手指力矩，取值范围 0.0~1.0
+  --spd <值>：手指速度，取值范围 0.0~1.0
+  --clear_error：清除错误
 ============================================================================
 
 """
 
-from enum import Enum
 from typing import Optional
 import argparse
 import time
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
-
-
-class ControlMode(Enum):
-    """控制模式枚举
-    
-    定义灵巧手支持的各种控制模式，便于扩展新模式。
-    """
-    POS = "pos"      # 位置控制模式
-    TORQUE = "torque"          # 力矩控制模式
-    VEL = "vel"      # 速度控制模式
-
-
-class ControlConfig:
-    """控制配置类
-    
-    封装控制参数，便于配置管理和复用。
-    
-    属性：
-        mode (ControlMode): 控制模式
-        target_value (float): 目标控制值（位置/力矩/速度比例，范围0.0~1.0）
-        interval (float): 发布间隔（秒）
-    """
-    
-    def __init__(
-        self,
-        mode: ControlMode = ControlMode.POS,
-        target_value: float = 0.10,
-        interval: float = 0.2
-    ):
-        """初始化控制配置"""
-        self.mode = mode
-        self.target_value = target_value
-        self.interval = interval
+from bodyctrl_msgs.srv import SetForce, SetSpeed, SetClearError
 
 
 class InspireHandControllerDemo(Node):
-    """灵巧手多模式控制节点
+    """灵巧手多控制节点
     
-    该节点实现了一个可扩展的灵巧手控制系统，支持多种控制模式。
-    按顺序执行一次握拳动作，完成后自动退出。
+    按顺序执行一次动作，完成后自动退出。
     
     属性：
         left_hand_publisher: 左手控制话题发布器
@@ -94,9 +66,10 @@ class InspireHandControllerDemo(Node):
 
     # ========== 常量定义 ==========
     
-    # 关节ID顺序（与需求一致）
+    # 关节ID顺序
+    # JOINT_ID_SEQUENCE = ["6"]
     JOINT_ID_SEQUENCE = ["1", "2", "3", "4", "5"]
-    # JOINT_ID_SEQUENCE = ["1", "2", "3", "4", "5", "6"]
+    # 如果要同时控制拇指旋转关节(6号关节)，请注意其不要与其他关节同时运动，以免发生碰撞
 
     # 关节ID对应中文名称（用于日志）
     JOINT_NAME_MAP = {
@@ -110,92 +83,152 @@ class InspireHandControllerDemo(Node):
 
     # 控制模式对应的描述文本
     CONTROL_MODE_DESCRIPTIONS = {
-        ControlMode.POS: "位置控制",
-        ControlMode.TORQUE: "力矩控制",
-        ControlMode.VEL: "速度控制",
+        "pos": "位置控制",
+        "torque": "力矩控制",
+        "vel": "速度控制",
     }
 
-    def __init__(self, config: Optional[ControlConfig] = None):
+    def __init__(self, pos: Optional[float] = None, tor: Optional[float] = None, spd: Optional[float] = None, clear_error: bool = False):
         """
         初始化节点
         
         参数：
-            config (ControlConfig, optional): 控制配置。如果为None，使用默认配置。
+            pos (float, optional): 位置控制值，范围0.0~1.0
+            tor (float, optional): 力矩控制值，范围0.0~1.0
+            spd (float, optional): 速度控制值，范围0.0~1.0
+            clear_error (bool): 是否清除错误
         """
         super().__init__("inspire_hand_controller_demo")
 
-        # ========== 话题发布器初始化 ==========
-        
-        # 创建左右手控制话题发布器
-        self.left_hand_publisher = self.create_publisher(
-            JointState, "/inspire_hand/ctrl/left_hand", 10
-        )
-        self.right_hand_publisher = self.create_publisher(
-            JointState, "/inspire_hand/ctrl/right_hand", 10
-        )
+        # 保存控制参数
+        self.pos_value = pos
+        self.tor_value = tor
+        self.spd_value = spd
+        self.clear_error_flag = clear_error
 
-        # ========== 控制配置初始化 ==========
-        
-        # 如果未提供配置，使用默认配置
-        self.config = config if config is not None else ControlConfig()
+        # 位置话题发布器初始化
+        self.left_hand_publisher = self.create_publisher(JointState, "/inspire_hand/ctrl/left_hand", 10)
+        self.right_hand_publisher = self.create_publisher(JointState, "/inspire_hand/ctrl/right_hand", 10)
 
-        self.get_logger().info(
-            f"灵巧手控制节点已初始化\n"
-            f"  控制模式：{self.CONTROL_MODE_DESCRIPTIONS.get(self.config.mode, '未知')}\n"
-            f"  目标值：{self.config.target_value:.2f}\n"
-            f"  关节间隔：{self.config.interval}秒"
-        )
+        # 手指关节力矩服务和手指关节速度服务客户端初始化
+        self.left_hand_force_client = self.create_client(SetForce, "/inspire_hand/set_force/left_hand")
+        self.right_hand_force_client = self.create_client(SetForce, "/inspire_hand/set_force/right_hand")
+        self.left_hand_speed_client = self.create_client(SetSpeed, "/inspire_hand/set_speed/left_hand")
+        self.right_hand_speed_client = self.create_client(SetSpeed, "/inspire_hand/set_speed/right_hand")
+        
+        self.left_hand_clear_error_client = self.create_client(SetClearError, "/inspire_hand/set_clear_error/left_hand")
+        self.right_hand_clear_error_client = self.create_client(SetClearError, "/inspire_hand/set_clear_error/right_hand")
+
+        # 等待服务可用
+        if self.clear_error_flag:
+            if not self.left_hand_clear_error_client.wait_for_service(timeout_sec=1.0):
+                self.get_logger().warning("左手清除错误服务不可用")
+            if not self.right_hand_clear_error_client.wait_for_service(timeout_sec=1.0):
+                self.get_logger().warning("右手清除错误服务不可用")
+        else:
+            if self.tor_value is not None:
+                if not self.left_hand_force_client.wait_for_service(timeout_sec=1.0):
+                    self.get_logger().warning("左手力矩控制服务不可用")
+                if not self.right_hand_force_client.wait_for_service(timeout_sec=1.0):
+                    self.get_logger().warning("右手力矩控制服务不可用")
+
+            if self.spd_value is not None:
+                if not self.left_hand_speed_client.wait_for_service(timeout_sec=1.0):
+                    self.get_logger().warning("左手速度控制服务不可用")
+                if not self.right_hand_speed_client.wait_for_service(timeout_sec=1.0):
+                    self.get_logger().warning("右手速度控制服务不可用")
+
+        # ========== 参数初始化 ==========
+        
+        if self.clear_error_flag:
+            self.get_logger().info("灵巧手控制节点已初始化\n  操作：清除错误")
+        else:
+            mode_info = []
+            if self.pos_value is not None:
+                mode_info.append(f"位置: {self.pos_value:.2f}")
+            if self.tor_value is not None:
+                mode_info.append(f"力矩: {self.tor_value:.2f}")
+            if self.spd_value is not None:
+                mode_info.append(f"速度: {self.spd_value:.2f}")
+            
+            self.get_logger().info(
+                f"灵巧手控制节点已初始化\n"
+                f"  控制参数：{', '.join(mode_info) if mode_info else '无'}"
+            )
+
+    def clear_error(self):
+        """
+        清除手指错误状态
+        """
+        self.get_logger().info("开始清除错误状态...")
+        # 创建 ClearError 服务请求
+        request = SetClearError.Request()
+
+        # 发送请求到左右手清除错误服务
+        try:
+            # 左手服务调用 和 右手服务调用
+            future_left = self.left_hand_clear_error_client.call_async(request)
+            future_right = self.right_hand_clear_error_client.call_async(request)
+
+            # 等待服务响应
+            rclpy.spin_until_future_complete(self, future_left, timeout_sec=2.0)
+            rclpy.spin_until_future_complete(self, future_right, timeout_sec=2.0)
+
+            # 获取并打印服务响应
+            if future_left.done():
+                response_left = future_left.result()
+                self.get_logger().info(f"  左手响应 - clear_error_accepted: {response_left.clear_error_accepted}")
+
+            if future_right.done():
+                response_right = future_right.result()
+                self.get_logger().info(f"  右手响应 - clear_error_accepted: {response_right.clear_error_accepted}")
+
+            # 输出控制日志
+            self.get_logger().info(f"[清除错误] 服务调用参数：{request}")
+        except Exception as e:
+            self.get_logger().error(f"清除错误服务调用失败: {e}")
 
     def execute_hand_grasp(self):
         """
-        执行握拳动作 - 一次性顺序控制所有关节
+        执行动作 - 同时执行指定的控制模式或清除错误
+        """    
+        self.get_logger().info("开始执行控制命令...")
         
-        该方法按顺序控制每个手指到目标位置，完成后自动返回。
-        不使用定时器，直接用 time.sleep 实现延迟，更直观简洁。
-        """
-        self.get_logger().info(
-            f"开始执行握拳动作（{self.CONTROL_MODE_DESCRIPTIONS.get(self.config.mode, '未知模式')}）..."
-        )
+        # 执行力矩控制
+        if self.tor_value is not None:
+            self.set_force(self.tor_value)
         
-        # 遍历所有关节，依次执行控制
-        for i, joint_id in enumerate(self.JOINT_ID_SEQUENCE, start=1):
-            # 根据控制模式调用相应的控制方法
-            if self.config.mode == ControlMode.POS:
-                self._execute_position_control(joint_id)
-            elif self.config.mode == ControlMode.TORQUE:
-                self._execute_torque_control(joint_id)
-            elif self.config.mode == ControlMode.VEL:
-                self._execute_velocity_control(joint_id)
-            else:
-                self.get_logger().warning(f"未知的控制模式：{self.config.mode}")
-                continue
-            
-            # 除了最后一个关节，其他关节之间留有延迟
-            if i < len(self.JOINT_ID_SEQUENCE):
-                time.sleep(self.config.interval)
+        # 执行速度控制
+        if self.spd_value is not None:
+            self.set_speed(self.spd_value)
         
-        # 握拳动作完成
-        self.get_logger().info(
-            "✓ 握拳动作已完成，所有关节按顺序执行结束"
-        )
+        # 执行位置控制
+        if self.pos_value is not None:
+            self._execute_position_control(self.JOINT_ID_SEQUENCE, self.pos_value)
+        
+        # 动作完成
+        self.get_logger().info("✓ 动作已完成")
 
-    def _execute_position_control(self, joint_id: str):
+    def _execute_position_control(self, joint_ids: list, target_value):
         """
         位置控制模式执行函数
         
         发布单个关节的位置控制指令，使关节运动到目标位置。
         
         参数：
-            joint_id (str): 关节ID（字符串形式）
-        """
-        # 获取关节中文名称
-        joint_name = self.JOINT_NAME_MAP.get(joint_id, f"未知关节{joint_id}")
-
+            joint_ids (list): 关节ID列表（字符串形式）
+        """        
         # 构建位置控制消息
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.name = [joint_id]
-        msg.position = [self.config.target_value]
+    
+        # 遍历所有关节，依次执行控制
+        for i, joint_id in enumerate(joint_ids, start=1):
+            
+            joint_name = self.JOINT_NAME_MAP.get(joint_id, f"未知关节{joint_id}")
+
+            msg.name = [joint_id]
+            msg.position = [target_value]
 
         # 发布到左右手控制话题
         self.left_hand_publisher.publish(msg)
@@ -204,157 +237,188 @@ class InspireHandControllerDemo(Node):
         # 输出控制日志
         self.get_logger().info(
             f"[位置控制] 关节：{joint_name}(ID={joint_id})，"
-            f"目标位置：{self.config.target_value}"
+            f"目标位置：{self.pos_value}"
         )
+            
 
-    def _execute_torque_control(self, joint_id: str):
+    def set_force(self, force_value : float):
         """
-        力矩控制模式执行函数
+        设置手指各个关节的位置力矩
         
-        发布单个关节的力矩控制指令。
-        在此模式下，effort字段用于指定目标力矩百分比。
-        
+        通过 SetForce 服务发送力矩控制命令。
+        该服务可同时控制所有6个手指关节的力矩。
+                
         参数：
-            joint_id (str): 关节ID（字符串形式）
+            force_value: 力矩比例值列表（浮点数，范围0.0~1.0，0代表0g，1代表1000g）
         """
-        # 获取关节中文名称
-        joint_name = self.JOINT_NAME_MAP.get(joint_id, f"未知关节{joint_id}")
+        # 创建 SetForce 服务请求
+        request = SetForce.Request()
+        
+        # 填充所有力反馈比例参数（这里简单将所有关节的力矩比例设置为相同值，实际应用中可根据具体场景调整）
+        request.force0_ratio = force_value
+        request.force1_ratio = force_value
+        request.force2_ratio = force_value
+        request.force3_ratio = force_value
+        request.force4_ratio = force_value
+        request.force5_ratio = force_value
 
-        # 构建力矩控制消息
-        msg = JointState()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.name = [joint_id]
-        # 力矩控制使用effort字段
-        msg.effort = [self.config.target_value]
+        # 发送请求到左右手力矩控制服务
+        try:
+            # 左手服务调用
+            future_left = self.left_hand_force_client.call_async(request)
+            
+            # 右手服务调用
+            future_right = self.right_hand_force_client.call_async(request)
+            
+            # 等待服务响应
+            rclpy.spin_until_future_complete(self, future_left, timeout_sec=2.0)
+            rclpy.spin_until_future_complete(self, future_right, timeout_sec=2.0)
+            
+            # 获取并打印服务响应
+            if future_left.done():
+                response_left = future_left.result()
+                self.get_logger().info(f"  左手响应 - force_accepted: {response_left.force_accepted}")
+            
+            if future_right.done():
+                response_right = future_right.result()
+                self.get_logger().info(f"  右手响应 - force_accepted: {response_right.force_accepted}")
+            
+            # 输出控制日志
+            self.get_logger().info(
+                f"[力矩控制] 目标力矩比例：{force_value}，"
+                f"服务调用参数：{request}，"
+            )
+        except Exception as e:
+            self.get_logger().error(f"力矩控制服务调用失败: {e}")
 
-        # 发布到左右手控制话题
-        self.left_hand_publisher.publish(msg)
-        self.right_hand_publisher.publish(msg)
-
-        # 输出控制日志
-        self.get_logger().info(
-            f"[力矩控制] 关节：{joint_name}(ID={joint_id})，"
-            f"目标力矩：{self.config.target_value}"
-        )
-
-    def _execute_velocity_control(self, joint_id: str):
+    def set_speed(self, speed_value : float):
         """
-        速度控制模式执行函数
+        设置手指各个关节的速度
         
-        发布单个关节的速度控制指令。
-        在此模式下，velocity字段用于指定目标速度百分比。
-        
+        通过 SetSpeed 服务发送速度控制命令。
+        该服务可同时控制所有6个手指关节的速度。
+                
         参数：
-            joint_id (str): 关节ID（字符串形式）
+            speed_value: 速度比例值列表（浮点数，范围0.0~1.0，1代表800ms从最大角度到最小角度，0.5代表1600ms，0.25代表3200ms）
         """
-        # 获取关节中文名称
-        joint_name = self.JOINT_NAME_MAP.get(joint_id, f"未知关节{joint_id}")
-
-        # 构建速度控制消息
-        msg = JointState()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.name = [joint_id]
-        # 速度控制使用velocity字段
-        msg.vel = [self.config.target_value]
-
-        # 发布到左右手控制话题
-        self.left_hand_publisher.publish(msg)
-        self.right_hand_publisher.publish(msg)
-
-        # 输出控制日志
-        self.get_logger().info(
-            f"[速度控制] 关节：{joint_name}(ID={joint_id})，"
-            f"目标速度：{self.config.target_value}"
-        )
-
-    def add_new_control_mode(self, mode: ControlMode, description: str):
-        """
-        注册新的控制模式
+        # 创建 SetSpeed 服务请求
+        request = SetSpeed.Request()
         
-        未来如需添加新的控制模式（如力反馈控制、自适应控制等），
-        可通过此方法进行注册。
-        
-        参数：
-            mode (ControlMode): 新的控制模式
-            description (str): 模式描述
-        """
-        self.CONTROL_MODE_DESCRIPTIONS[mode] = description
-        self.get_logger().info(f"已注册新的控制模式：{description}")
+        # 填充所有速度比例参数（这里简单将所有关节的速度比例设置为相同值，实际应用中可根据具体场景调整）
+        request.speed0_ratio = speed_value
+        request.speed1_ratio = speed_value
+        request.speed2_ratio = speed_value
+        request.speed3_ratio = speed_value
+        request.speed4_ratio = speed_value
+        request.speed5_ratio = speed_value
 
+        # 发送请求到左右手速度控制服务
+        try:
+            # 左手服务调用 和 右手服务调用
+            future_left = self.left_hand_speed_client.call_async(request)
+            future_right = self.right_hand_speed_client.call_async(request)
+            
+            # 等待服务响应
+            rclpy.spin_until_future_complete(self, future_left, timeout_sec=2.0)
+            rclpy.spin_until_future_complete(self, future_right, timeout_sec=2.0)
+            
+            # 获取并打印服务响应
+            if future_left.done():
+                response_left = future_left.result()
+                self.get_logger().info(f"  左手响应 - speed_accepted: {response_left.speed_accepted}")
+            
+            if future_right.done():
+                response_right = future_right.result()
+                self.get_logger().info(f"  右手响应 - speed_accepted: {response_right.speed_accepted}")
+            
+            # 输出控制日志
+            self.get_logger().info(
+                f"[速度控制] 目标速度比例：{speed_value}，"
+                f"服务调用参数：{request}，"
+            )
+        except Exception as e:
+            self.get_logger().error(f"速度控制服务调用失败: {e}")
 
 def main(args=None):
     
-    # ========== 命令行参数解析 ==========
-    
     # 定义参数解析器
     parser = argparse.ArgumentParser(
-        description="灵巧手多模式控制节点\n"
-                    "支持位置、力矩、速度三种控制模式",
+        description="灵巧手多模式控制节点",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="示例用法：\n"
-               "  位置控制：ros2 run sdk_demo hand_control pos\n"
-               "  力矩控制：ros2 run sdk_demo hand_control torque --target 0.50\n"
-               "  速度控制：ros2 run sdk_demo hand_control vel"
+               "  位置控制：ros2 run sdk_demo hand_control --pos 0.5\n"
+               "  力矩设置：ros2 run sdk_demo hand_control --tor 0.3\n"
+               "  速度设置：ros2 run sdk_demo hand_control --spd 0.2\n"
+               "  组合控制：ros2 run sdk_demo hand_control --pos 0.5 --tor 0.3 --spd 0.2\n"
+               "  清除错误：ros2 run sdk_demo hand_control --clear_error"
     )
     
-    # 位置参数：控制模式（必需）
+    # 可选参数：位置值
     parser.add_argument(
-        'mode',
-        choices=['pos', 'torque', 'vel'],
-        help="控制模式选择："
-             "pos 为位置控制，"
-             "torque 为力矩控制，"
-             "vel 为速度控制"
-    )
-    
-    # 可选参数：目标值
-    parser.add_argument(
-        '--target',
+        '--pos',
         type=float,
-        default=0.50,
-        help="目标控制值比例（范围0.0~1.0，默认：0.50）"
+        default=None,
+        help="位置控制值（范围0.0~1.0）"
     )
     
-    # 可选参数：发布间隔
+    # 可选参数：力矩值
     parser.add_argument(
-        '--interval',
+        '--tor',
         type=float,
-        default=0.3,
-        help="关节控制间隔，单位秒（默认：0.2秒）"
+        default=None,
+        help="力矩设置值（范围0.0~1.0，0代表0g，1代表1000g）"
+    )
+    
+    # 可选参数：速度值
+    parser.add_argument(
+        '--spd',
+        type=float,
+        default=None,
+        help="速度设置值（范围0.0~1.0，1代表800ms从最大角度到最小角度，0.5代表1600ms，0.25代表3200ms）"
+    )
+    
+    # 可选参数：清除错误
+    parser.add_argument(
+        '--clear_error',
+        action='store_true',
+        help="清除手指错误状态（不能与其他参数共用）"
     )
     
     # 解析命令行参数
-    # 注意：ROS2会在args中传入额外的参数，需要分离
     parsed_args = parser.parse_args(args)
     
-    # ========== 根据参数选择控制模式 ==========
+    # ========== 参数验证 ==========
     
-    # 将模式字符串映射到ControlMode枚举
-    mode_map = {
-        'pos': ControlMode.POS,
-        'torque': ControlMode.TORQUE,
-        'vel': ControlMode.VEL
-    }
-    
-    selected_mode = mode_map[parsed_args.mode]
-    
-    # 创建控制配置
-    config = ControlConfig(
-        mode=selected_mode,
-        target_value=parsed_args.target,
-        interval=parsed_args.interval
-    )
+    if parsed_args.clear_error:
+        # 清除错误模式下，不能有其他参数
+        if parsed_args.pos is not None or parsed_args.tor is not None or parsed_args.spd is not None:
+            print("错误：--clear_error 参数不能与 --pos、--tor 或 --spd 参数共用")
+            return
+    else:
+        # 非清除错误模式下，至少需要一个参数
+        if parsed_args.pos is None and parsed_args.tor is None and parsed_args.spd is None:
+            parser.print_help()
+            print("\n错误：至少需要指定 --pos、--tor、--spd 中的一个参数，或使用 --clear_error")
+            return
     
     # ========== ROS2初始化和运行 ==========
     
     rclpy.init(args=args)
     
     # 创建节点实例
-    node = InspireHandControllerDemo(config=config)
+    node = InspireHandControllerDemo(
+        pos=parsed_args.pos,
+        tor=parsed_args.tor,
+        spd=parsed_args.spd,
+        clear_error=parsed_args.clear_error
+    )
     
     try:
-        # 执行握拳动作（一次性动作）
-        node.execute_hand_grasp()
+        # 执行动作
+        if parsed_args.clear_error:
+            node.clear_error()
+        else:
+            node.execute_hand_grasp()
         
         # 动作执行完毕，正常退出
         node.get_logger().info("程序执行完成，退出")

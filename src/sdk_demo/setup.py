@@ -31,6 +31,11 @@ setup(
             'leg_motor_control = sdk_demo.8_leg_motor_control:main',
             'hand_control = sdk_demo.11_hand_control:main',
             'hand_status = sdk_demo.11_hand_status:main',
+            
+            'battery_status_demo = sdk_demo.13_1_battery_status_demo:main',
+            'power_board_status_demo = sdk_demo.13_2_power_board_status_demo:main',
+            'stop_key_status_demo = sdk_demo.13_3_stop_key_status_demo:main',
+            'sbus_event_demo = sdk_demo.14_sbus_event_demo:main',
 
             'waist_control_demo = sdk_demo.5_2_1_waist_control_demo:main',
             'arm_status_demo = sdk_demo.6_1_1_arm_status_demo:main',
@@ -42,10 +47,6 @@ setup(
             'leg_status_demo = sdk_demo.7_1_1_leg_status_demo:main',
             'leg_control_demo = sdk_demo.7_2_1_leg_control_demo:main',
             'asr_demo = sdk_demo.8_1_asr_demo:main',
-            'battery_status_demo = sdk_demo.10_1_battery_status_demo:main',
-            'power_board_status_demo = sdk_demo.10_2_power_board_status_demo:main',
-            'stop_key_status_demo = sdk_demo.10_3_stop_key_status_demo:main',
-            'sbus_event_demo = sdk_demo.11_sbus_event_demo:main',
             'point_cloud_img_demo = sdk_demo.14_1_1_save_pointcloud_images:main',
             'point_cloud_pcd_demo = sdk_demo.14_1_2_save_point_cloud_pcd:main',
             'obstacle_detect_demo = sdk_demo.14_1_3_obstacle_detector:main',
