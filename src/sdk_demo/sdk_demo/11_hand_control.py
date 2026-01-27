@@ -26,16 +26,20 @@
 【位置、力矩、速度控制】
     ros2 run sdk_demo hand_control --pos 0.5 --tor 0.1 --spd 0.1
 
+【指定关节控制】
+    ros2 run sdk_demo hand_control --ids 1,2,3,4 --pos 0.5 --tor 0.1 --spd 0.1
+
 【位置和力矩控制】
     ros2 run sdk_demo hand_control --pos 0.6 --tor 0.2
 
-【仅位置控制】
+【仅位置控制（默认控制1号关节）】
     ros2 run sdk_demo hand_control --pos 0.8
     
 【清除错误】
     ros2 run sdk_demo hand_control --clear_error
 
 【参数说明】
+  --ids <值>：要控制的关节ID列表，用逗号分隔（如 1,2,3），可选值1-6，不传时默认控制1号关节，重复的ID会自动去重
   --pos <值>：手指位置，取值范围 0.0~1.0，1表示完全张开，0表示完全握紧，如果要同时控制拇指旋转关节(6号关节)和其他关节，请注意其与其他关节的相对位置关系，避免发生碰撞损坏灵巧手
   --tor <值>：手指力矩，取值范围 0.0~1.0，手指关节转动过程中会施加的最大力矩，0代表0g，1代表1000g
   --spd <值>：手指速度，取值范围 0.0~1.0，手指关节转动速度，1代表800ms从最大角度到最小角度，0.5代表1600ms，0.25代表3200ms
@@ -89,7 +93,7 @@ class InspireHandControllerDemo(Node):
         "vel": "速度控制",
     }
 
-    def __init__(self, pos: Optional[float] = None, tor: Optional[float] = None, spd: Optional[float] = None, clear_error: bool = False):
+    def __init__(self, pos: Optional[float] = None, tor: Optional[float] = None, spd: Optional[float] = None, clear_error: bool = False, joint_ids: Optional[list] = None):
         """
         初始化节点
         
@@ -98,6 +102,7 @@ class InspireHandControllerDemo(Node):
             tor (float, optional): 力矩控制值，范围0.0~1.0
             spd (float, optional): 速度控制值，范围0.0~1.0
             clear_error (bool): 是否清除错误
+            joint_ids (list, optional): 要控制的关节ID列表，如 ["1", "2", "3"]，默认为 JOINT_ID_SEQUENCE
         """
         super().__init__("inspire_hand_controller_demo")
 
@@ -106,6 +111,7 @@ class InspireHandControllerDemo(Node):
         self.tor_value = tor
         self.spd_value = spd
         self.clear_error_flag = clear_error
+        self.joint_ids = joint_ids if joint_ids else ["1"]
 
         # 位置话题发布器初始化
         self.left_hand_publisher = self.create_publisher(JointState, "/inspire_hand/ctrl/left_hand", 10)
@@ -152,9 +158,12 @@ class InspireHandControllerDemo(Node):
             if self.spd_value is not None:
                 mode_info.append(f"速度: {self.spd_value:.2f}")
             
+            joint_names = [self.JOINT_NAME_MAP.get(jid, f"未知关节{jid}") for jid in self.joint_ids]
+            
             self.get_logger().info(
                 f"灵巧手控制节点已初始化\n"
-                f"  控制参数：{', '.join(mode_info) if mode_info else '无'}"
+                f"  控制参数：{', '.join(mode_info) if mode_info else '无'}\n"
+                f"  控制关节：{', '.join(joint_names)} (IDs: {', '.join(self.joint_ids)})"
             )
 
     def clear_error(self):
@@ -205,7 +214,7 @@ class InspireHandControllerDemo(Node):
         
         # 执行位置控制
         if self.pos_value is not None:
-            self._execute_position_control(self.JOINT_ID_SEQUENCE, self.pos_value)
+            self._execute_position_control(self.joint_ids, self.pos_value)
         
         # 动作完成
         self.get_logger().info("✓ 动作已完成")
@@ -226,10 +235,8 @@ class InspireHandControllerDemo(Node):
         msg.position = []
     
         # 遍历所有关节，依次执行控制
-        for i, joint_id in enumerate(joint_ids, start=1):
-            
+        for joint_id in joint_ids:
             joint_name = self.JOINT_NAME_MAP.get(joint_id, f"未知关节{joint_id}")
-
             msg.name.append(joint_id)
             msg.position.append(target_value)
 
@@ -238,8 +245,9 @@ class InspireHandControllerDemo(Node):
         self.right_hand_publisher.publish(msg)
 
         # 输出控制日志
+        joint_names = [self.JOINT_NAME_MAP.get(jid, f"未知关节{jid}") for jid in joint_ids]
         self.get_logger().info(
-            f"[位置控制] 关节：{joint_name}(ID={joint_id})，"
+            f"[位置控制] 关节：{', '.join(joint_names)} (IDs: {', '.join(joint_ids)})，"
             f"目标位置：{self.pos_value}，"
             f"发布消息：{msg}"
         )
@@ -350,11 +358,20 @@ def main(args=None):
         description="灵巧手多模式控制节点",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="示例用法：\n"
-               "  位置控制：ros2 run sdk_demo hand_control --pos 0.5\n"
+               "  位置控制（默认控制1号关节）：ros2 run sdk_demo hand_control --pos 0.5\n"
+               "  指定关节：ros2 run sdk_demo hand_control --ids 1,2,3 --pos 0.5\n"
                "  力矩设置：ros2 run sdk_demo hand_control --tor 0.3\n"
                "  速度设置：ros2 run sdk_demo hand_control --spd 0.2\n"
-               "  组合控制：ros2 run sdk_demo hand_control --pos 0.5 --tor 0.3 --spd 0.2\n"
+               "  组合控制：ros2 run sdk_demo hand_control --ids 1,2,3 --pos 0.5 --tor 0.3 --spd 0.2\n"
                "  清除错误：ros2 run sdk_demo hand_control --clear_error"
+    )
+    
+    # 可选参数：关节ID列表
+    parser.add_argument(
+        '--ids',
+        type=str,
+        default=None,
+        help="要控制的关节ID列表，用逗号分隔（如 1,2,3），可选值1-6，不传时默认控制1号关节，重复的ID会自动去重"
     )
     
     # 可选参数：位置值
@@ -393,6 +410,27 @@ def main(args=None):
     
     # ========== 参数验证 ==========
     
+    # 处理 --ids 参数
+    joint_ids = None
+    if parsed_args.ids is not None:
+        try:
+            joint_ids = [id_str.strip() for id_str in parsed_args.ids.split(',')]
+            # 对关节ID进行去重
+            joint_ids = list(set(joint_ids))
+            
+            # 验证关节ID是否在有效范围内
+            valid_ids = set(['1', '2', '3', '4', '5', '6'])
+            invalid_ids = set(joint_ids) - valid_ids
+            if invalid_ids:
+                print(f"错误：无效的关节ID {invalid_ids}，有效值为 1-6")
+                return
+            if not joint_ids:
+                print("错误：--ids 参数不能为空")
+                return
+        except Exception as e:
+            print(f"错误：--ids 参数格式错误，应为逗号分隔的数字（如 1,2,3）")
+            return
+    
     if parsed_args.clear_error:
         # 清除错误模式下，不能有其他参数
         if parsed_args.pos is not None or parsed_args.tor is not None or parsed_args.spd is not None:
@@ -414,7 +452,8 @@ def main(args=None):
         pos=parsed_args.pos,
         tor=parsed_args.tor,
         spd=parsed_args.spd,
-        clear_error=parsed_args.clear_error
+        clear_error=parsed_args.clear_error,
+        joint_ids=joint_ids
     )
     
     try:
