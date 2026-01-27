@@ -26,14 +26,6 @@
 3. 图片保存位置:
    保存在源代码目录下的 10_depth_camera_imgs/ 文件夹中
 
-依赖:
------
-- rclpy
-- sensor_msgs
-- Pillow (PIL)
-
-作者: SDK Demo
-日期: 2026-01-27
 """
 
 import rclpy
