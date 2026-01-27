@@ -23,22 +23,22 @@
 使用说明
 ============================================================================
 
-【仅位置控制】
-    ros2 run sdk_demo hand_control --pos 0.8
-    
-【位置和力矩控制】
-    ros2 run sdk_demo hand_control --pos 0.6 --tor 0.5
-
 【位置、力矩、速度控制】
     ros2 run sdk_demo hand_control --pos 0.5 --tor 0.1 --spd 0.1
 
+【位置和力矩控制】
+    ros2 run sdk_demo hand_control --pos 0.6 --tor 0.2
+
+【仅位置控制】
+    ros2 run sdk_demo hand_control --pos 0.8
+    
 【清除错误】
     ros2 run sdk_demo hand_control --clear_error
 
 【参数说明】
-  --pos <值>：手指位置，取值范围 0.0~1.0
-  --tor <值>：手指力矩，取值范围 0.0~1.0
-  --spd <值>：手指速度，取值范围 0.0~1.0
+  --pos <值>：手指位置，取值范围 0.0~1.0，1表示完全张开，0表示完全握紧，如果要同时控制拇指旋转关节(6号关节)和其他关节，请注意其与其他关节的相对位置关系，避免发生碰撞损坏灵巧手
+  --tor <值>：手指力矩，取值范围 0.0~1.0，手指关节转动过程中会施加的最大力矩，0代表0g，1代表1000g
+  --spd <值>：手指速度，取值范围 0.0~1.0，手指关节转动速度，1代表800ms从最大角度到最小角度，0.5代表1600ms，0.25代表3200ms
   --clear_error：清除错误
 ============================================================================
 
@@ -67,9 +67,10 @@ class InspireHandControllerDemo(Node):
     # ========== 常量定义 ==========
     
     # 关节ID顺序
-    # JOINT_ID_SEQUENCE = ["6"]
-    JOINT_ID_SEQUENCE = ["1", "2", "3", "4", "5"]
-    # 如果要同时控制拇指旋转关节(6号关节)，请注意其不要与其他关节同时运动，以免发生碰撞
+    JOINT_ID_SEQUENCE = ["6"]                          # 单独控制拇指旋转关节(6号关节)
+    # JOINT_ID_SEQUENCE = ["1", "2", "3", "4", "5"]      # 控制除拇指旋转外的其他关节(1-5号关节)
+    # JOINT_ID_SEQUENCE = ["1", "2", "3", "4"]             # 控制除整个拇指外的其他关节(1-4号关节)
+    # 如果要同时控制拇指旋转关节(6号关节)，请注意其与其他关节的相对位置关系，避免发生碰撞损坏灵巧手
 
     # 关节ID对应中文名称（用于日志）
     JOINT_NAME_MAP = {
@@ -121,21 +122,21 @@ class InspireHandControllerDemo(Node):
 
         # 等待服务可用
         if self.clear_error_flag:
-            if not self.left_hand_clear_error_client.wait_for_service(timeout_sec=1.0):
+            if not self.left_hand_clear_error_client.wait_for_service(timeout_sec=2.0):
                 self.get_logger().warning("左手清除错误服务不可用")
-            if not self.right_hand_clear_error_client.wait_for_service(timeout_sec=1.0):
+            if not self.right_hand_clear_error_client.wait_for_service(timeout_sec=2.0):
                 self.get_logger().warning("右手清除错误服务不可用")
         else:
             if self.tor_value is not None:
-                if not self.left_hand_force_client.wait_for_service(timeout_sec=1.0):
+                if not self.left_hand_force_client.wait_for_service(timeout_sec=2.0):
                     self.get_logger().warning("左手力矩控制服务不可用")
-                if not self.right_hand_force_client.wait_for_service(timeout_sec=1.0):
+                if not self.right_hand_force_client.wait_for_service(timeout_sec=2.0):
                     self.get_logger().warning("右手力矩控制服务不可用")
 
             if self.spd_value is not None:
-                if not self.left_hand_speed_client.wait_for_service(timeout_sec=1.0):
+                if not self.left_hand_speed_client.wait_for_service(timeout_sec=2.0):
                     self.get_logger().warning("左手速度控制服务不可用")
-                if not self.right_hand_speed_client.wait_for_service(timeout_sec=1.0):
+                if not self.right_hand_speed_client.wait_for_service(timeout_sec=2.0):
                     self.get_logger().warning("右手速度控制服务不可用")
 
         # ========== 参数初始化 ==========
@@ -177,11 +178,11 @@ class InspireHandControllerDemo(Node):
             # 获取并打印服务响应
             if future_left.done():
                 response_left = future_left.result()
-                self.get_logger().info(f"  左手响应 - clear_error_accepted: {response_left.clear_error_accepted}")
+                self.get_logger().info(f"  左手响应 - setclear_error_accepted: {response_left.setclear_error_accepted}")
 
             if future_right.done():
                 response_right = future_right.result()
-                self.get_logger().info(f"  右手响应 - clear_error_accepted: {response_right.clear_error_accepted}")
+                self.get_logger().info(f"  右手响应 - setclear_error_accepted: {response_right.setclear_error_accepted}")
 
             # 输出控制日志
             self.get_logger().info(f"[清除错误] 服务调用参数：{request}")
@@ -198,7 +199,7 @@ class InspireHandControllerDemo(Node):
         if self.tor_value is not None:
             self.set_force(self.tor_value)
         
-        # 执行速度控制
+        # 设置手指关节转动速度
         if self.spd_value is not None:
             self.set_speed(self.spd_value)
         
@@ -221,14 +222,16 @@ class InspireHandControllerDemo(Node):
         # 构建位置控制消息
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
+        msg.name = []
+        msg.position = []
     
         # 遍历所有关节，依次执行控制
         for i, joint_id in enumerate(joint_ids, start=1):
             
             joint_name = self.JOINT_NAME_MAP.get(joint_id, f"未知关节{joint_id}")
 
-            msg.name = [joint_id]
-            msg.position = [target_value]
+            msg.name.append(joint_id)
+            msg.position.append(target_value)
 
         # 发布到左右手控制话题
         self.left_hand_publisher.publish(msg)
@@ -237,7 +240,8 @@ class InspireHandControllerDemo(Node):
         # 输出控制日志
         self.get_logger().info(
             f"[位置控制] 关节：{joint_name}(ID={joint_id})，"
-            f"目标位置：{self.pos_value}"
+            f"目标位置：{self.pos_value}，"
+            f"发布消息：{msg}"
         )
             
 
@@ -293,7 +297,7 @@ class InspireHandControllerDemo(Node):
 
     def set_speed(self, speed_value : float):
         """
-        设置手指各个关节的速度
+        设置手指各个关节的转动速度
         
         通过 SetSpeed 服务发送速度控制命令。
         该服务可同时控制所有6个手指关节的速度。
@@ -358,7 +362,7 @@ def main(args=None):
         '--pos',
         type=float,
         default=None,
-        help="位置控制值（范围0.0~1.0）"
+        help="位置控制值（范围0.0~1.0，0表示完全握紧，如果同时控制所有手指，可能会发生大拇指旋转(6)和其他自由度的碰撞，请谨慎使用）"
     )
     
     # 可选参数：力矩值
