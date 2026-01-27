@@ -23,26 +23,36 @@
 使用说明
 ============================================================================
 
-【位置、力矩、速度控制】
+【位置、力矩、速度控制(默认控制1号关节)】
     ros2 run sdk_demo hand_control --pos 0.5 --tor 0.1 --spd 0.1
 
-【指定关节控制】
-    ros2 run sdk_demo hand_control --ids 1,2,3,4 --pos 0.5 --tor 0.1 --spd 0.1
-
-【位置和力矩控制】
+【位置和力矩控制(默认控制1号关节)】
     ros2 run sdk_demo hand_control --pos 0.6 --tor 0.2
 
-【仅位置控制（默认控制1号关节）】
+【仅位置控制(默认控制1号关节)】
     ros2 run sdk_demo hand_control --pos 0.8
     
+【指定关节控制】
+    # 控制大拇指外的所有关节
+    ros2 run sdk_demo hand_control --ids 1,2,3,4 --pos 0.5 --tor 0.1 --spd 0.1
+    ros2 run sdk_demo hand_control --ids 1,2,3,4 --pos 0.8 --tor 0.1 --spd 0.1
+
+    # 控制大拇指弯曲关节
+    ros2 run sdk_demo hand_control --ids 5 --pos 0.6 --tor 0.1 --spd 0.1
+    ros2 run sdk_demo hand_control --ids 5 --pos 1.0 --tor 0.1 --spd 0.1
+
+    # 控制大拇指旋转关节
+    ros2 run sdk_demo hand_control --ids 6 --pos 0.6 --tor 0.1 --spd 0.1
+    ros2 run sdk_demo hand_control --ids 6 --pos 1.0 --tor 0.1 --spd 0.1
+
 【清除错误】
     ros2 run sdk_demo hand_control --clear_error
 
 【参数说明】
-  --ids <值>：要控制的关节ID列表，用逗号分隔（如 1,2,3），可选值1-6，不传时默认控制1号关节，重复的ID会自动去重
-  --pos <值>：手指位置，取值范围 0.0~1.0，1表示完全张开，0表示完全握紧，如果要同时控制拇指旋转关节(6号关节)和其他关节，请注意其与其他关节的相对位置关系，避免发生碰撞损坏灵巧手
-  --tor <值>：手指力矩，取值范围 0.0~1.0，手指关节转动过程中会施加的最大力矩，0代表0g，1代表1000g
-  --spd <值>：手指速度，取值范围 0.0~1.0，手指关节转动速度，1代表800ms从最大角度到最小角度，0.5代表1600ms，0.25代表3200ms
+  --ids <值>：要控制的关节ID列表，用逗号分隔（如 1,2,3），可选值1-6，默认仅控制1号关节(小拇指)，如果要同时控制大拇指旋转关节(6号关节)和其他关节，请注意其与其他关节的相对位置关系，避免发生碰撞损坏灵巧手
+  --pos <值>：手指关节位置，取值范围 0.0~1.0，1表示完全张开，0表示完全握紧
+  --tor <值>：手指关节转动过程中施加的力矩，取值范围 0.0~1.0，手指关节转动过程中会施加的最大力矩，0代表0g，1代表1000g
+  --spd <值>：手指关节转动速度，取值范围 0.0~1.0，手指关节转动速度，1代表800ms从最大角度到最小角度，0.5代表1600ms，0.25代表3200ms
   --clear_error：清除错误
 ============================================================================
 
@@ -71,9 +81,7 @@ class InspireHandControllerDemo(Node):
     # ========== 常量定义 ==========
     
     # 关节ID顺序
-    JOINT_ID_SEQUENCE = ["6"]                          # 单独控制拇指旋转关节(6号关节)
-    # JOINT_ID_SEQUENCE = ["1", "2", "3", "4", "5"]      # 控制除拇指旋转外的其他关节(1-5号关节)
-    # JOINT_ID_SEQUENCE = ["1", "2", "3", "4"]             # 控制除整个拇指外的其他关节(1-4号关节)
+    JOINT_ID_SEQUENCE = ["1"]                          # 单独控制小拇指关节(1号关节)
     # 如果要同时控制拇指旋转关节(6号关节)，请注意其与其他关节的相对位置关系，避免发生碰撞损坏灵巧手
 
     # 关节ID对应中文名称（用于日志）
@@ -111,7 +119,7 @@ class InspireHandControllerDemo(Node):
         self.tor_value = tor
         self.spd_value = spd
         self.clear_error_flag = clear_error
-        self.joint_ids = joint_ids if joint_ids else ["1"]
+        self.joint_ids = joint_ids if joint_ids else self.JOINT_ID_SEQUENCE
 
         # 位置话题发布器初始化
         self.left_hand_publisher = self.create_publisher(JointState, "/inspire_hand/ctrl/left_hand", 10)
@@ -255,10 +263,9 @@ class InspireHandControllerDemo(Node):
 
     def set_force(self, force_value : float):
         """
-        设置手指各个关节的位置力矩
+        设置手指各个关节的旋转过程中会施加的最大力矩
         
-        通过 SetForce 服务发送力矩控制命令。
-        该服务可同时控制所有6个手指关节的力矩。
+        通过 SetForce 服务发送力矩控制命令，该服务可同时控制所有6个手指关节的力矩。
                 
         参数：
             force_value: 力矩比例值列表（浮点数，范围0.0~1.0，0代表0g，1代表1000g）
@@ -307,8 +314,7 @@ class InspireHandControllerDemo(Node):
         """
         设置手指各个关节的转动速度
         
-        通过 SetSpeed 服务发送速度控制命令。
-        该服务可同时控制所有6个手指关节的速度。
+        通过 SetSpeed 服务发送速度控制命令，该服务可同时控制所有6个手指关节的速度。
                 
         参数：
             speed_value: 速度比例值列表（浮点数，范围0.0~1.0，1代表800ms从最大角度到最小角度，0.5代表1600ms，0.25代表3200ms）
@@ -371,7 +377,7 @@ def main(args=None):
         '--ids',
         type=str,
         default=None,
-        help="要控制的关节ID列表，用逗号分隔（如 1,2,3），可选值1-6，不传时默认控制1号关节，重复的ID会自动去重"
+        help="要控制的关节ID列表，用逗号分隔（如 1,2,3），可选值1-6，默认仅控制1号关节(小拇指)，如果要同时控制大拇指旋转关节(6号关节)和其他关节，请注意其与其他关节的相对位置关系，避免发生碰撞损坏灵巧手"
     )
     
     # 可选参数：位置值
@@ -379,7 +385,7 @@ def main(args=None):
         '--pos',
         type=float,
         default=None,
-        help="位置控制值（范围0.0~1.0，0表示完全握紧，如果同时控制所有手指，可能会发生大拇指旋转(6)和其他自由度的碰撞，请谨慎使用）"
+        help="位置控制值（范围0.0~1.0，0表示完全握紧，1表示完全张开）"
     )
     
     # 可选参数：力矩值
