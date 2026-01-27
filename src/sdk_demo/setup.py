@@ -37,6 +37,10 @@ setup(
             'power_board_status_demo = sdk_demo.13_2_power_board_status_demo:main',
             'stop_key_status_demo = sdk_demo.13_3_stop_key_status_demo:main',
             'sbus_event_demo = sdk_demo.14_sbus_event_demo:main',
+            'lidar_demo = sdk_demo.17_lidar_demo:main',
+            'save_point_cloud_pcd = sdk_demo.17_save_point_cloud_pcd:main',
+            'save_pointcloud_images = sdk_demo.17_save_pointcloud_images:main',
+
 
             'waist_control_demo = sdk_demo.5_2_1_waist_control_demo:main',
             'arm_status_demo = sdk_demo.6_1_1_arm_status_demo:main',

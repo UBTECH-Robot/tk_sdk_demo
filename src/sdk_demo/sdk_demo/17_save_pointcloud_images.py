@@ -1,3 +1,8 @@
+# 使用方式：
+# 1. 确保已安装 matplotlib 库：pip install matplotlib
+# 2. 运行此节点：
+#       ros2 run sdk_demo save_pointcloud_images
+
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2
