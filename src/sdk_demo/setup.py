@@ -13,7 +13,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'msg'), glob('msg/*.msg')),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'Pillow'],
     zip_safe=True,
     maintainer='ubuntu',
     maintainer_email='kai.yang@x-humanoid.com',
@@ -29,6 +29,7 @@ setup(
             'waist_motor_control = sdk_demo.6_waist_motor_control:main',
             'arm_motor_control = sdk_demo.7_arm_motor_control:main',
             'leg_motor_control = sdk_demo.8_leg_motor_control:main',
+            'depth_camera = sdk_demo.10_depth_camera:main',
             'hand_control = sdk_demo.11_hand_control:main',
             'hand_status = sdk_demo.11_hand_status:main',
             
