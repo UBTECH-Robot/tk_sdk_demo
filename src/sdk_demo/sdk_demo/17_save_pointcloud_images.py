@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 # 使用方式：
 # 1. 确保已安装 matplotlib 库：pip install matplotlib
 # 2. 运行此节点：
@@ -9,16 +11,17 @@ from sensor_msgs.msg import PointCloud2
 import sensor_msgs_py.point_cloud2 as pc2
 
 import numpy as np
-import os
 import time
-import glob
 import matplotlib.pyplot as plt
+from pathlib import Path
 
 class PointCloudXZPlotter(Node):
     def __init__(self):
         super().__init__('livox_pointcloud_xz_plotter')
 
-        self.save_dir = 'pointcloud_imgs'
+        # 使用 _find_source_directory 方法智能定位源代码目录
+        self.script_dir = self._find_source_directory()
+        self.save_dir = self.script_dir / 'livox_data' / 'pointcloud_imgs'
         self.prepare_directory()
 
         self.subscription = self.create_subscription(
@@ -32,14 +35,53 @@ class PointCloudXZPlotter(Node):
         self.max_images = 100
         self.last_save_time = time.time()
 
+    def _find_source_directory(self):
+        """智能定位源代码目录
+        
+        通过分析当前文件路径，自动定位到ROS2工作空间的src目录。
+        适用于从install目录运行或直接从src目录运行的情况。
+        
+        Returns:
+            Path: 源代码目录路径
+        """
+        current_file = Path(__file__).resolve()
+        
+        # 情况1: 如果当前在install目录运行
+        # 路径类似: /path/to/workspace/install/pkg/lib/.../file.py
+        # 需要找到workspace根目录，然后定位到src/pkg/pkg/
+        if 'install' in current_file.parts:
+            # 向上查找直到找到包含install目录的父目录（工作空间根目录）
+            path = current_file
+            while path.parent != path:
+                # 检查当前目录是否同时包含install和src目录（工作空间根目录特征）
+                if (path / 'install').exists() and (path / 'src').exists():
+                    # 找到工作空间根目录
+                    workspace_root = path
+                    # 构造源代码路径: workspace/src/sdk_demo/sdk_demo/
+                    source_dir = workspace_root / 'src' / 'sdk_demo' / 'sdk_demo'
+                    if source_dir.exists():
+                        return source_dir
+                    break
+                # 继续向上查找父目录
+                path = path.parent
+        
+        # 情况2: 如果当前已经在src目录运行（开发时直接运行）
+        # 路径类似: /path/to/workspace/src/pkg/pkg/file.py
+        if 'src' in current_file.parts:
+            # 当前文件的父目录就是我们要的目录（src/pkg/pkg/）
+            return current_file.parent
+        
+        # 备用方案: 返回当前文件所在目录
+        return current_file.parent
+    
     def prepare_directory(self):
-        if not os.path.exists(self.save_dir):
-            os.makedirs(self.save_dir)
+        if not self.save_dir.exists():
+            self.save_dir.mkdir(parents=True, exist_ok=True)
         else:
-            png_files = glob.glob(os.path.join(self.save_dir, '*.png'))
+            png_files = list(self.save_dir.glob('*.png'))
             for f in png_files:
-                os.remove(f)
-            self.get_logger().info(f'清空旧图片，准备保存至目录：{self.save_dir}')
+                f.unlink()
+            self.get_logger().info(f'清空旧图片，准备保存至目录：{self.save_dir.resolve()}')
 
     def pointcloud_callback(self, msg):
         now = time.time()
@@ -77,10 +119,10 @@ class PointCloudXZPlotter(Node):
         plt.grid(True)
 
         # 保存图像
-        image_path = os.path.join(self.save_dir, f'pointcloud_{self.image_count}.png')
-        plt.savefig(image_path, dpi=150)
+        image_path = self.save_dir / f'pointcloud_{self.image_count}.png'
+        plt.savefig(str(image_path), dpi=150)
         plt.close()
-        self.get_logger().info(f'保存图像: {image_path}')
+        self.get_logger().info(f'保存图像: {image_path.name}')
         self.image_count += 1
 
 def main(args=None):
