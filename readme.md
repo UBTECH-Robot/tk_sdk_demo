@@ -55,3 +55,4 @@ ros2 run sdk_demo rl_cmd_control_test
 ```
 
 
+可运行的示例代码都在 src/sdk_demo/sdk_demo 目录下。
