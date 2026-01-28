@@ -127,7 +127,7 @@ class DepthCameraNode(Node):
         # 智能定位源代码目录
         self.script_dir = Path("saved_data")
         self.save_dir = self.script_dir / '10_depth_camera_imgs'
-        self.save_dir.mkdir(exist_ok=True)
+        self.save_dir.mkdir(parents=True, exist_ok=True)
         self.get_logger().info(f'图片保存目录: {self.save_dir}')
         
         # 初始化 rqt_process 属性
