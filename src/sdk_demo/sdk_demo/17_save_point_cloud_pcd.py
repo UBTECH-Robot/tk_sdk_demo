@@ -1,11 +1,70 @@
-# 使用方式：
-# 1. 确保已安装 open3d 库：pip install open3d
-# 2. 运行此节点：
-#       ros2 run sdk_demo save_point_cloud_pcd
-# 3. 如果没有数据，请检查：
-#    - 雷达是否正常工作
-#    - 话题名称是否正确：ros2 topic list
-#    - 话题是否有数据发布：ros2 topic hz /livox/lidar
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+Livox 雷达点云数据批量保存为PCD文件
+
+功能说明：
+=========
+本脚本用于从Livox雷达订阅点云数据，并将其保存为标准的PCD（Point Cloud Data）文件格式。
+PCD是PCL（Point Cloud Library）库的标准格式，支持多种点云处理工具读取。
+
+主要功能：
+1. 订阅 /livox/lidar 话题的 PointCloud2 消息
+2. 每0.5秒保存一帧点云为单独的PCD文件（ASCII格式）
+3. 达到指定数量（默认100个）后自动停止
+4. 将所有PCD文件打包为 pointcloud_pcds.tar.gz 便于传输和存储
+5. 实时监控数据接收状态，帮助排查问题
+
+使用方式：
+=========
+1. 安装依赖库：
+   pip install open3d
+   或
+   conda install -c open3d-admin open3d
+
+2. 确保Livox雷达已连接并正常工作：
+   - 检查话题列表：ros2 topic list | grep livox
+   - 检查话题数据：ros2 topic hz /livox/lidar
+   - 查看点云内容：ros2 topic echo /livox/lidar --no-arr
+
+3. 运行此节点：
+   ros2 run sdk_demo save_point_cloud_pcd
+
+4. 等待采集完成，脚本会自动退出并生成：
+   - pointcloud_pcds/ 目录（包含所有PCD文件）
+   - pointcloud_pcds.tar.gz 打包文件
+
+5. 查看PCD文件（任选其一）：
+   - CloudCompare: 专业点云查看器
+   - PCL Viewer: pcl_viewer pointcloud_0001.pcd
+   - Python + Open3D: o3d.io.read_point_cloud("xxx.pcd")
+   - RViz2: 先转换回PointCloud2再可视化
+
+配置参数：
+=========
+可在 __init__ 方法中修改以下参数：
+- save_dir: 保存目录名称（默认 'pointcloud_pcds'）
+- max_images: 最大保存文件数（默认 100）
+- 时间间隔: 在 pointcloud_callback 中修改（默认 0.5秒）
+
+注意事项：
+=========
+1. 磁盘空间：每个PCD文件约3-10MB（取决于点数），100个文件需300MB-1GB空间
+2. 保存速度：ASCII格式便于阅读但文件较大，如需高速保存可改用binary格式
+3. 数据完整性：脚本会跳过空点云，确保每个文件都有有效数据
+4. Ctrl+C中断：会自动打包已保存的文件，不会丢失数据
+
+故障排查：
+=========
+如果脚本运行后没有保存数据，依次检查：
+1. 雷达连接：检查硬件连接和驱动程序
+2. ROS话题：ros2 topic list 确认 /livox/lidar 存在
+3. 数据发布：ros2 topic hz /livox/lidar 确认有数据流
+4. 权限问题：确保当前目录有写入权限
+5. 依赖库：确认 open3d 已正确安装
+
+"""
 
 import rclpy
 from rclpy.node import Node
