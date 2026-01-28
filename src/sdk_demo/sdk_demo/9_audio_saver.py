@@ -17,6 +17,16 @@
        colcon build
        source install/setup.bash
 
+    4. 播放保存的PCM文件（Linux系统）：
+       aplay -f S16_LE -r 16000 -c 1 audio_165959906.pcm
+
+    5. 调整音量：
+       # 音量调整到100%
+       amixer set Speaker 100%
+       
+       # 音量调整到50%
+       amixer set Speaker 50%
+
 详细音频协议文档：https://aiui-doc.xf-yun.com/project-1/doc-392/
 
 依赖项：
