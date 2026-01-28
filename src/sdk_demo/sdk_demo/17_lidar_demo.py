@@ -112,6 +112,9 @@ import csv
 from datetime import datetime
 from pathlib import Path
 import struct
+import subprocess
+import signal
+import time
 
 
 class LivoxDataRecorder(Node):
@@ -169,6 +172,12 @@ class LivoxDataRecorder(Node):
         
         # 创建定时器，每5秒显示一次统计信息
         self.timer = self.create_timer(5.0, self.display_statistics)
+        
+        # 存储rviz2进程对象，用于后续清理
+        self.rviz_process = None
+        
+        # 启动rviz2可视化工具
+        self.start_rviz2()
         
     def _find_source_directory(self):
         """智能定位源代码目录
@@ -407,6 +416,107 @@ class LivoxDataRecorder(Node):
         self.get_logger().info(f'  点云数据保存: {self.pointcloud_save_count} 个文件')
         self.get_logger().info(f'  数据目录: {self.data_dir}')
         self.get_logger().info('=' * 60)
+    
+    def start_rviz2(self):
+        """启动RViz2可视化工具来查看点云数据
+        
+        工作流程：
+        1. 查找外部RViz配置文件（17_lidar_demo_rviz_conf.rviz）
+        2. 使用subprocess启动rviz2进程，加载该配置文件
+        3. 记录进程对象，以便后续清理
+        
+        RViz2的作用：
+        - 实时显示Livox点云数据在三维空间中的分布
+        - 可视化IMU姿态信息
+        - 帮助调试和验证传感器数据
+        
+        配置说明：
+        - 配置文件位置: 17_lidar_demo_rviz_conf.rviz（与本脚本同目录）
+        - 设置Fixed Frame为雷达坐标系(通常是'livox_frame')
+        - 订阅/livox/lidar话题显示点云
+        - 配置点云颜色为按Z轴值显示(高度色)
+        """
+        try:
+            # 查找外部配置文件
+            rviz_config_file = self.script_dir / '17_lidar_demo_rviz_conf.rviz'
+            
+            # 检查配置文件是否存在
+            if not rviz_config_file.exists():
+                self.get_logger().error(
+                    f'RViz配置文件不存在: {rviz_config_file}\n'
+                    f'请确保 17_lidar_demo_rviz_conf.rviz 文件与脚本在同一目录'
+                )
+                return
+            
+            self.get_logger().info(f'使用RViz配置文件: {rviz_config_file}')
+            
+            # 启动rviz2进程
+            # 使用subprocess.Popen而不是run，这样可以获得进程对象以便后续控制
+            self.rviz_process = subprocess.Popen(
+                ['rviz2', '-d', str(rviz_config_file)],
+                stdout=subprocess.PIPE,  # 重定向标准输出，避免输出到控制台
+                stderr=subprocess.PIPE   # 重定向标准错误，避免输出到控制台
+            )
+            
+            # 给rviz2一些时间来启动
+            time.sleep(2)
+            
+            # 检查进程是否成功启动
+            if self.rviz_process.poll() is None:
+                # poll() 返回 None 表示进程还在运行
+                self.get_logger().info('RViz2已启动，点云数据将在窗口中显示')
+            else:
+                # 进程已经退出，说明启动失败
+                self.get_logger().warn('RViz2启动失败或已退出')
+                self.rviz_process = None
+                
+        except FileNotFoundError:
+            # rviz2命令未找到（可能未安装或不在PATH中）
+            self.get_logger().warn('RViz2未安装或不在系统PATH中，跳过可视化')
+        except Exception as e:
+            self.get_logger().error(f'启动RViz2失败: {str(e)}')
+            self.rviz_process = None
+    
+    def cleanup_rviz2(self):
+        """清理rviz2进程
+        
+        确保rviz2窗口被正确关闭，释放系统资源。
+        这个方法必须在程序退出前被调用，无论是正常退出还是异常退出。
+        
+        清理步骤：
+        1. 检查进程是否存在
+        2. 尝试优雅地关闭（发送SIGTERM信号）
+        3. 如果无响应，强制杀死进程（发送SIGKILL）
+        """
+        if self.rviz_process is None:
+            return  # 进程不存在，无需清理
+        
+        try:
+            # 检查进程是否还在运行
+            if self.rviz_process.poll() is None:
+                # 进程还在运行，尝试优雅地关闭
+                self.get_logger().info('正在关闭RViz2...')
+                
+                # 发送SIGTERM信号（优雅关闭）
+                self.rviz_process.terminate()
+                
+                # 等待最多5秒让进程优雅退出
+                try:
+                    self.rviz_process.wait(timeout=5)
+                    self.get_logger().info('RViz2已优雅关闭')
+                except subprocess.TimeoutExpired:
+                    # 如果5秒后还没退出，强制杀死进程
+                    self.get_logger().warn('RViz2未在规定时间内关闭，强制杀死进程')
+                    self.rviz_process.kill()
+                    self.rviz_process.wait()  # 确保进程真的被杀死
+                    self.get_logger().info('RViz2已被强制关闭')
+            else:
+                # 进程已经退出
+                self.get_logger().info('RViz2进程已退出')
+        except Exception as e:
+            self.get_logger().error(f'关闭RViz2时发生错误: {str(e)}')
+        finally:
+            self.rviz_process = None
 
 
 def main(args=None):
@@ -417,13 +527,17 @@ def main(args=None):
     1. 确保Livox雷达已连接并正常工作
     2. 运行此脚本: python3 17_lidar_demo.py
     3. 数据将自动保存到脚本所在目录的 livox_data 文件夹中
-    4. 按 Ctrl+C 停止记录
+    4. RViz2窗口将自动打开显示点云数据
+    5. 按 Ctrl+C 停止记录（RViz2窗口也会自动关闭）
     
     数据文件说明：
     - livox_data/imu/*.csv: IMU数据文件
     - livox_data/pointcloud/*.pcd: 点云数据文件
     - 文件名包含时间戳，便于识别
-    - 自动保持最新的10个文件
+    - 自动保持最新的50个文件
+    
+    资源清理说明：
+    无论是正常退出、Ctrl+C中断、还是程序崩溃，都会尽力清理RViz2进程。
     """
     rclpy.init(args=args)
     
@@ -436,18 +550,39 @@ def main(args=None):
         rclpy.spin(recorder)
     except KeyboardInterrupt:
         recorder.get_logger().info('用户中断，正在停止...')
+    except Exception as e:
+        recorder.get_logger().error(f'发生错误: {str(e)}')
     finally:
-        # 显示最终统计
-        recorder.get_logger().info('=' * 60)
-        recorder.get_logger().info('最终统计:')
-        recorder.get_logger().info(f'  总共接收IMU数据: {recorder.imu_count} 条')
-        recorder.get_logger().info(f'  总共保存IMU文件: {recorder.imu_save_count} 个')
-        recorder.get_logger().info(f'  总共接收点云数据: {recorder.pointcloud_count} 帧')
-        recorder.get_logger().info(f'  总共保存点云文件: {recorder.pointcloud_save_count} 个')
-        recorder.get_logger().info('=' * 60)
+        # 第一步：尽快清理rviz2进程，以确保在任何情况下都被清理
+        try:
+            recorder.cleanup_rviz2()
+        except Exception as e:
+            recorder.get_logger().error(f'清理RViz2时发生错误: {str(e)}')
         
-        recorder.destroy_node()
-        rclpy.shutdown()
+        # 显示最终统计
+        try:
+            recorder.get_logger().info('=' * 60)
+            recorder.get_logger().info('最终统计:')
+            recorder.get_logger().info(f'  总共接收IMU数据: {recorder.imu_count} 条')
+            recorder.get_logger().info(f'  总共保存IMU文件: {recorder.imu_save_count} 个')
+            recorder.get_logger().info(f'  总共接收点云数据: {recorder.pointcloud_count} 帧')
+            recorder.get_logger().info(f'  总共保存点云文件: {recorder.pointcloud_save_count} 个')
+            recorder.get_logger().info('=' * 60)
+        except Exception as e:
+            print(f'显示统计信息失败: {str(e)}')
+        
+        # 第二步：销毁ROS节点
+        try:
+            recorder.destroy_node()
+        except Exception as e:
+            print(f'销毁节点失败: {str(e)}')
+        
+        # 第三步：关闭ROS客户端
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception as e:
+            print(f'关闭ROS失败: {str(e)}')
 
 
 if __name__ == '__main__':
