@@ -132,7 +132,7 @@ class LivoxDataRecorder(Node):
         super().__init__('livox_data_recorder')
         
         # 创建数据保存目录
-        self.script_dir = self._find_source_directory()
+        self.script_dir = Path("saved_data")
         self.data_dir = self.script_dir / 'livox_data'
         self.imu_dir = self.data_dir / 'imu'
         self.pointcloud_dir = self.data_dir / 'pointcloud'
@@ -179,45 +179,6 @@ class LivoxDataRecorder(Node):
         # 启动rviz2可视化工具
         self.start_rviz2()
         
-    def _find_source_directory(self):
-        """智能定位源代码目录
-        
-        通过分析当前文件路径，自动定位到ROS2工作空间的src目录。
-        适用于从install目录运行或直接从src目录运行的情况。
-        
-        Returns:
-            Path: 源代码目录路径
-        """
-        current_file = Path(__file__).resolve()
-        
-        # 情况1: 如果当前在install目录运行
-        # 路径类似: /path/to/workspace/install/pkg/lib/.../file.py
-        # 需要找到workspace根目录，然后定位到src/pkg/pkg/
-        if 'install' in current_file.parts:
-            # 向上查找直到找到包含install目录的父目录（工作空间根目录）
-            path = current_file
-            while path.parent != path:
-                # 检查当前目录是否同时包含install和src目录（工作空间根目录特征）
-                if (path / 'install').exists() and (path / 'src').exists():
-                    # 找到工作空间根目录
-                    workspace_root = path
-                    # 构造源代码路径: workspace/src/sdk_demo/sdk_demo/
-                    source_dir = workspace_root / 'src' / 'sdk_demo' / 'sdk_demo'
-                    if source_dir.exists():
-                        return source_dir
-                    break
-                # 继续向上查找父目录
-                path = path.parent
-        
-        # 情况2: 如果当前已经在src目录运行（开发时直接运行）
-        # 路径类似: /path/to/workspace/src/pkg/pkg/file.py
-        if 'src' in current_file.parts:
-            # 当前文件的父目录就是我们要的目录（src/pkg/pkg/）
-            return current_file.parent
-        
-        # 备用方案: 返回当前文件所在目录
-        return current_file.parent
-    
     def imu_callback(self, msg):
         """
         IMU数据回调函数

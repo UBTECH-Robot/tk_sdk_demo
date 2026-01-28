@@ -1,3 +1,6 @@
+# 运行方式：
+#    ros2 run sdk_demo power_board_status_demo
+
 import rclpy
 from rclpy.node import Node
 

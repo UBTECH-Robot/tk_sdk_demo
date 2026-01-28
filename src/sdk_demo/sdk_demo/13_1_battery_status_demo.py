@@ -1,3 +1,6 @@
+# 运行方式：
+#    ros2 run sdk_demo battery_status_demo
+
 import rclpy
 from rclpy.node import Node
 from bodyctrl_msgs.msg import PowerBatteryStatus  # 自定义消息类型

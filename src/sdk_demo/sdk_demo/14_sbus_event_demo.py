@@ -1,3 +1,6 @@
+# 运行方式：
+#    ros2 run sdk_demo sbus_event_demo
+
 import rclpy
 from rclpy.node import Node
 
@@ -12,7 +15,7 @@ class SbusEventListener(Node):
             self.listener_callback,
             10
         )
-        self.subscription
+        self.subscription  # 防止被回收
 
         # 映射按键事件常量（与 msg 定义一致）
         self.key_event_map = {

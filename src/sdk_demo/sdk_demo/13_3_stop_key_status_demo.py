@@ -1,3 +1,7 @@
+
+# 运行方式：
+#    ros2 run sdk_demo stop_key_status_demo
+
 import rclpy
 from rclpy.node import Node
 
