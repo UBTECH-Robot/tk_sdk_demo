@@ -179,11 +179,6 @@ class ASRNode(Node):
             msg (AsrKeyword): 关键词消息
                 - keyword: 检测到的关键词
                 - angle: 声源方向角度
-        
-        日志输出:
-            - 关键词内容
-            - 声源方向角度
-            - 接收统计
         """
         self.keyword_count += 1
         self.last_keyword_time = time.time()
@@ -205,11 +200,6 @@ class ASRNode(Node):
             msg (AsrIat): 识别结果消息
                 - id: 识别会话 ID
                 - text: 识别出的文本
-        
-        日志输出:
-            - 识别文本
-            - 会话 ID
-            - 接收统计
         """
         self.iat_count += 1
         self.last_iat_time = time.time()
@@ -265,21 +255,6 @@ class ASRNode(Node):
         # 统一使用 info 级别输出，避免 Logger severity 错误
         self.get_logger().info('─' * 60)
         self.get_logger().info(f'{icon} [ASR 事件] [{event_name}][arg1={msg.arg1}, arg2={msg.arg2}]')
-        
-        # 特殊事件的额外说明
-        # if msg.event == 2:  # ERROR
-        #     self.get_logger().info(f'   错误码: {msg.arg1}')
-        # elif msg.event == 13:  # CONNECTED_TO_SERVER
-        #     self.get_logger().info('   状态: 已成功连接到 ASR 服务器')
-        # elif msg.event == 14:  # SERVER_DISCONNECTED
-        #     self.get_logger().info('   状态: 已断开与 ASR 服务器的连接')
-        # elif msg.event == 4:  # WAKEUP
-        #     self.get_logger().info('   状态: 设备已唤醒，准备接收语音')
-        # elif msg.event == 5:  # SLEEP
-        #     self.get_logger().info('   状态: 设备已休眠')
-        # elif msg.event == 6:  # VAD
-        #     self.get_logger().info('   状态: 语音活动检测事件')
-        
         self.get_logger().info('─' * 60)
     
     def get_statistics(self):
