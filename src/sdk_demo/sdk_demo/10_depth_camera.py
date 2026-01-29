@@ -159,15 +159,43 @@ class DepthCameraNode(Node):
         通过检查ROS2话题是否存在来判断相机服务是否正常运行。
         如果服务未启动，会输出错误信息并提示启动命令。
         
+        注意：ROS2的话题发现需要时间（DDS发现协议），因此会进行多次重试。
+        
         Returns:
             bool: 如果所有必需的话题都存在返回True，否则返回False
         """
         self.get_logger().info('正在检查相机服务...')
         
-        # 获取当前ROS2系统中所有可用的话题列表
-        topic_names_and_types = self.get_topic_names_and_types()
-        available_topics = [name for name, _ in topic_names_and_types]
-        self.get_logger().info(f'可用的话题: {available_topics}')
+        # 等待话题发现，最多重试5次
+        max_retries = 5
+        retry_delay = 0.8  # 每次重试间隔0.8秒
+        
+        for attempt in range(max_retries):
+            # 获取当前ROS2系统中所有可用的话题列表
+            topic_names_and_types = self.get_topic_names_and_types()
+            available_topics = [name for name, _ in topic_names_and_types]
+            
+            # 过滤出相机相关的话题
+            camera_topics = list(filter(lambda x: "camera" in x and self.current_camera in x, available_topics))
+            
+            if len(available_topics) == 0:
+                # 完全没有话题，可能是刚启动
+                self.get_logger().warn(f'第 {attempt + 1}/{max_retries} 次尝试：未发现任何话题，等待 {retry_delay} 秒后重试...')
+                time.sleep(retry_delay)
+                continue
+            elif len(camera_topics) == 0:
+                # 有话题但没有当前相机的话题
+                self.get_logger().warn(f'第 {attempt + 1}/{max_retries} 次尝试：未发现 {self.current_camera} 相机话题，等待 {retry_delay} 秒后重试...')
+                time.sleep(retry_delay)
+                continue
+            else:
+                # 发现了相机话题，输出日志并继续检查
+                self.get_logger().info(f"发现 {len(camera_topics)} 个相机话题:\n" + "\n".join(camera_topics) + "\n")
+                break
+        else:
+            # 所有重试都失败
+            self.get_logger().error(f'经过 {max_retries} 次尝试后仍未发现 {self.current_camera} 相机话题')
+            return False
         
         # 遍历所有相机配置
         for camera_id, config in self.CAMERA_CONFIGS.items():
