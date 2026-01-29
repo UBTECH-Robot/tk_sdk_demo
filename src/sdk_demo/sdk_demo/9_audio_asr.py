@@ -1,55 +1,64 @@
 #!/usr/bin/env python3
 """
-TTS 文本转语音节点 (Text-to-Speech Node)
-==========================================
+ASR 语音识别节点 (Automatic Speech Recognition Node)
+====================================================
 
-此模块提供 TTS 文本转语音功能，通过调用 lyre 服务将文本转换为语音并播放。
+此模块提供 ASR 语音识别功能，订阅 lyre 服务发布的语音识别相关话题。
 
 主要功能:
-    1. 调用远程 TTS 服务 (/audio_play/play_text)
-    2. 支持流式播放和打断播放
-    3. 服务可用性检查
-    4. 同步和异步调用模式
+    1. 订阅唤醒关键词话题 (/audio_asr/keyword)
+    2. 订阅语音识别结果话题 (/audio_asr/iat)
+    3. 订阅 ASR 事件话题 (/audio_asr/event)
+    4. 实时输出识别结果和事件日志
 
-服务依赖:
-    - 服务名: /audio_play/play_text
-    - 服务提供者: lyre (运行在 192.168.41.2)
-    - 环境配置: 需要先执行 `. ~/lyre_ros2/install/setup.bash`
+话题依赖:
+    - /audio_asr/keyword (lyre_msgs/msg/AsrKeyword) - 唤醒关键词
+    - /audio_asr/iat (lyre_msgs/msg/AsrIat) - 识别文本
+    - /audio_asr/event (lyre_msgs/msg/AsrEvent) - 系统事件
+    - 发布者: lyre (运行在 192.168.41.2)
+
+lyre 服务启动:
+    如果 lyre 服务未启动，可在 192.168.41.2 上执行:
+    cd /home/nvidia/lyre_ros2 && . install/setup.bash && ros2 launch lyre audio.launch.py
 
 使用示例:
-    # 配置环境变量
-    # 如果在天工的orin板上运行本脚本，用这个命令设置 lyre_ros2 环境变量
+    # 配置环境变量（根据运行平台选择）
+    # Orin 板
     source ~/lyre_ros2/install/setup.bash
-
-    # 如果在天工的x86板上运行本脚本，用这个命令设置 lyre_ros2 环境变量
+    # 或 x86 板
     source ~/ros2ws/install/setup.bash
     
     # 启动节点
     ros2 run sdk_demo audio_asr
+    
+    # 节点会持续监听并输出识别结果
 
 注意事项:
-    - 需要先确保192.168.41.2上的 lyre 服务已启动
-        cd /home/nvidia/lyre_ros2 && . install/setup.bash && ros2 launch lyre audio.launch.py
-
+    - 需要先确保 lyre 服务已启动
+    - 需要配置正确的环境变量
+    - 确保网络连接正常（192.168.41.2）
 """
 
 import rclpy
 from rclpy.node import Node
-from rclpy.client import Client
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 import sys
 import time
-import uuid
+from collections import defaultdict
 
 try:
-    from lyre_msgs.srv import PlayText
+    from lyre_msgs.msg import AsrKeyword, AsrIat, AsrEvent
 except ImportError:
     print("=" * 70)
-    print("错误: 无法导入 lyre_msgs.srv.PlayText")
+    print("错误: 无法导入 lyre_msgs")
     print("=" * 70)
     print("请先配置 lyre_ros2 环境变量:")
-    print("  source ~/lyre_ros2/install/setup.bash # 天工 orin 板")
     print("")
-    print("  source ~/ros2ws/install/setup.bash # 天工 x86 板")
+    print("  如果在天工 Orin 板上运行:")
+    print("    source ~/lyre_ros2/install/setup.bash")
+    print("")
+    print("  如果在天工 x86 板上运行:")
+    print("    source ~/ros2ws/install/setup.bash")
     print("")
     print("然后重新运行此节点:")
     print("  ros2 run sdk_demo audio_asr")
@@ -57,307 +66,280 @@ except ImportError:
     sys.exit(1)
 
 
-class TTSNode(Node):
+class ASRNode(Node):
     """
-    TTS 文本转语音节点
+    ASR 语音识别节点
     
-    通过调用远程 lyre 服务实现文本转语音功能。
-    支持流式播放、强制打断等高级特性。
+    订阅 lyre 服务发布的语音识别相关话题，实时输出识别结果。
+    
+    订阅话题:
+        - /audio_asr/keyword: 唤醒关键词检测
+        - /audio_asr/iat: 语音识别结果
+        - /audio_asr/event: ASR 系统事件
     
     属性:
-        client: 服务客户端
-        service_name: TTS 服务名称
-        service_timeout: 服务等待超时时间（秒）
-    
-    方法:
-        play_text: 播放文本（同步）
-        play_text_async: 播放文本（异步）
-        check_service: 检查服务是否可用
+        keyword_sub: 关键词订阅器
+        iat_sub: 识别结果订阅器
+        event_sub: 事件订阅器
+        topic_check_timer: 话题检查定时器
+        last_keyword_time: 最后一次关键词时间
+        last_iat_time: 最后一次识别结果时间
+        last_event_time: 最后一次事件时间
     """
+    
+    # ASR 事件类型映射
+    EVENT_NAMES = {
+        2: "ERROR (出错)",
+        3: "STATE (服务状态)",
+        4: "WAKEUP (唤醒)",
+        5: "SLEEP (休眠)",
+        6: "VAD (语音活动检测)",
+        10: "PRE_SLEEP (准备休眠)",
+        13: "CONNECTED_TO_SERVER (已连接服务器)",
+        14: "SERVER_DISCONNECTED (服务器断开)"
+    }
     
     def __init__(self):
         """
-        初始化 TTS 节点
+        初始化 ASR 节点
         
         初始化流程:
             1. 创建节点
-            2. 创建服务客户端
-            3. 检查服务是否可用
-            4. 如果服务不可用，提示并退出
-        
-        退出条件:
-            - 服务在超时时间内未发现
-            - 提示用户检查 lyre 服务状态
+            2. 配置 QoS
+            3. 创建三个话题订阅器
+            4. 启动话题检查定时器
+            5. 输出初始化信息
         """
-        super().__init__('tts_node')
+        super().__init__('asr_node')
         
-        # 服务配置
-        self.service_name = '/audio_play/play_text'
-        self.service_timeout = 10.0  # 等待服务的超时时间（秒）
+        self.get_logger().info('=' * 60)
+        self.get_logger().info('正在初始化 ASR 语音识别节点...')
+        self.get_logger().info('=' * 60)
         
-        self.get_logger().info('正在初始化 TTS 节点...')
+        # 配置 QoS（使用 BEST_EFFORT 以兼容 lyre 服务）
+        qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10,
+            durability=DurabilityPolicy.VOLATILE
+        )
         
-        # 创建服务客户端
-        self.client = self.create_client(PlayText, self.service_name)
-        self.get_logger().info(f'已创建服务客户端: {self.service_name}')
+        # 话题接收统计
+        self.last_keyword_time = None
+        self.last_iat_time = None
+        self.last_event_time = None
+        self.keyword_count = 0
+        self.iat_count = 0
+        self.event_count = 0
         
-        # 检查服务是否存在
-        if not self.check_service():
-            self.get_logger().error('=' * 60)
-            self.get_logger().error(f'未发现服务: {self.service_name}')
-            self.get_logger().error('请确认 192.168.41.2 上的 lyre 服务是否启动')
-            self.get_logger().error('检查项:')
-            self.get_logger().error('  1. lyre 服务是否正在运行')
-            self.get_logger().error('  2. 网络连接是否正常 (ping 192.168.41.2)')
-            self.get_logger().error('=' * 60)
-            sys.exit(1)
+        # 创建订阅器
+        self.get_logger().info('创建话题订阅器...')
         
-        self.get_logger().info('TTS 服务已就绪，节点初始化完成')
+        # 1. 唤醒关键词订阅
+        self.keyword_sub = self.create_subscription(
+            AsrKeyword,
+            '/audio_asr/keyword',
+            self.keyword_callback,
+            qos_profile
+        )
+        self.get_logger().info('✓ 已订阅: /audio_asr/keyword (唤醒关键词)')
+        
+        # 2. 识别结果订阅
+        self.iat_sub = self.create_subscription(
+            AsrIat,
+            '/audio_asr/iat',
+            self.iat_callback,
+            qos_profile
+        )
+        self.get_logger().info('✓ 已订阅: /audio_asr/iat (识别结果)')
+        
+        # 3. 事件订阅
+        self.event_sub = self.create_subscription(
+            AsrEvent,
+            '/audio_asr/event',
+            self.event_callback,
+            qos_profile
+        )
+        self.get_logger().info('✓ 已订阅: /audio_asr/event (系统事件)')
+        
+        self.get_logger().info('=' * 60)
+        self.get_logger().info('ASR 节点初始化完成')
+        self.get_logger().info('=' * 60)
+        self.get_logger().info('等待 ASR 数据...')
+        self.get_logger().info('=' * 60)
+        self.get_logger().info('')
     
-    def check_service(self) -> bool:
+    def keyword_callback(self, msg: AsrKeyword):
         """
-        检查 TTS 服务是否可用
+        唤醒关键词回调函数
         
-        等待服务在超时时间内上线。
+        当检测到唤醒关键词时触发。
         
-        返回:
-            bool: True 表示服务可用，False 表示超时未发现
+        参数:
+            msg (AsrKeyword): 关键词消息
+                - keyword: 检测到的关键词
+                - angle: 声源方向角度
         
-        超时时间:
-            由 self.service_timeout 设置（默认 10 秒）
-        
-        日志:
-            - 每秒输出等待信息
-            - 服务发现后输出确认信息
+        日志输出:
+            - 关键词内容
+            - 声源方向角度
+            - 接收统计
         """
-        self.get_logger().info(f'正在等待服务: {self.service_name}')
-        self.get_logger().info(f'超时时间: {self.service_timeout} 秒')
+        self.keyword_count += 1
+        self.last_keyword_time = time.time()
         
-        # 等待服务可用
-        service_available = self.client.wait_for_service(timeout_sec=self.service_timeout)
+        self.get_logger().info('─' * 60)
+        self.get_logger().info('🎤 [唤醒关键词]')
+        self.get_logger().info(f'   关键词: "{msg.keyword}"')
+        self.get_logger().info(f'   声源角度: {msg.angle}°')
+        self.get_logger().info(f'   统计: 第 {self.keyword_count} 次唤醒')
+        self.get_logger().info('─' * 60)
+    
+    def iat_callback(self, msg: AsrIat):
+        """
+        语音识别结果回调函数
         
-        if service_available:
-            self.get_logger().info(f'服务已发现: {self.service_name}')
-            return True
+        当接收到语音识别结果时触发。
+        
+        参数:
+            msg (AsrIat): 识别结果消息
+                - id: 识别会话 ID
+                - text: 识别出的文本
+        
+        日志输出:
+            - 识别文本
+            - 会话 ID
+            - 接收统计
+        """
+        self.iat_count += 1
+        self.last_iat_time = time.time()
+        
+        # 判断文本长度，采用不同的显示方式
+        if len(msg.text) > 100:
+            text_display = msg.text[:100] + "..."
         else:
-            self.get_logger().warning(f'服务等待超时 ({self.service_timeout} 秒)')
-            return False
-    
-    def play_text(
-        self, 
-        text: str, 
-        force: bool = False, 
-        sid: str = None,
-        seq: int = 0,
-        last: bool = True,
-        token: str = "",
-        output: str = "",
-        timeout: float = 30.0
-    ) -> tuple:
-        """
-        播放文本（同步调用）
+            text_display = msg.text
         
-        将文本发送到 TTS 服务进行语音合成和播放。
-        此方法会阻塞直到服务响应或超时。
+        self.get_logger().info('─' * 60)
+        self.get_logger().info(f'💬[识别结果][{text_display}]')
+        self.get_logger().info('─' * 60)
+    
+    def event_callback(self, msg: AsrEvent):
+        """
+        ASR 事件回调函数
+        
+        当 ASR 系统产生事件时触发。
         
         参数:
-            text (str): 要转换为语音的文本内容
-            force (bool): 是否强制播放（打断当前播放），默认 False
-            sid (str): 流标识符，如果为 None 则自动生成 UUID
-            seq (int): 序列号（用于流式传输），默认 0
-            last (bool): 是否为最后一个包，默认 True
-            token (str): 系统 API 令牌（应用不可用），默认空
-            output (str): 输出配置（应用不可用），默认空
-            timeout (float): 服务调用超时时间（秒），默认 30.0
+            msg (AsrEvent): 事件消息
+                - event: 事件类型代码
+                - arg1: 事件参数1（错误码等）
+                - arg2: 事件参数2
+        
+        事件类型:
+            2: ERROR - 出错事件，arg1 是错误码
+            3: STATE - 服务状态事件
+            4: WAKEUP - 唤醒事件
+            5: SLEEP - 休眠事件
+            6: VAD - 语音活动检测事件
+            10: PRE_SLEEP - 准备休眠事件
+            13: CONNECTED_TO_SERVER - 与服务端建立连接
+            14: SERVER_DISCONNECTED - 与服务端断开连接
+        """
+        self.event_count += 1
+        self.last_event_time = time.time()
+        
+        # 获取事件名称
+        event_name = self.EVENT_NAMES.get(msg.event, f"UNKNOWN ({msg.event})")
+        
+        # 根据事件类型选择图标
+        if msg.event == 2:  # ERROR
+            icon = '❌'
+        elif msg.event in [4, 13]:  # WAKEUP, CONNECTED
+            icon = '✅'
+        elif msg.event in [5, 14]:  # SLEEP, DISCONNECTED
+            icon = '⚠️'
+        else:
+            icon = 'ℹ️'
+        
+        # 统一使用 info 级别输出，避免 Logger severity 错误
+        self.get_logger().info('─' * 60)
+        self.get_logger().info(f'{icon} [ASR 事件] [{event_name}][arg1={msg.arg1}, arg2={msg.arg2}]')
+        
+        # 特殊事件的额外说明
+        # if msg.event == 2:  # ERROR
+        #     self.get_logger().info(f'   错误码: {msg.arg1}')
+        # elif msg.event == 13:  # CONNECTED_TO_SERVER
+        #     self.get_logger().info('   状态: 已成功连接到 ASR 服务器')
+        # elif msg.event == 14:  # SERVER_DISCONNECTED
+        #     self.get_logger().info('   状态: 已断开与 ASR 服务器的连接')
+        # elif msg.event == 4:  # WAKEUP
+        #     self.get_logger().info('   状态: 设备已唤醒，准备接收语音')
+        # elif msg.event == 5:  # SLEEP
+        #     self.get_logger().info('   状态: 设备已休眠')
+        # elif msg.event == 6:  # VAD
+        #     self.get_logger().info('   状态: 语音活动检测事件')
+        
+        self.get_logger().info('─' * 60)
+    
+    def get_statistics(self):
+        """
+        获取接收统计信息
         
         返回:
-            tuple: (success: bool, sid: str, message: str)
-                - success: 是否成功
-                - sid: 播放流 ID
-                - message: 状态消息
+            dict: 统计信息字典
+                - keyword_count: 关键词接收次数
+                - iat_count: 识别结果接收次数
+                - event_count: 事件接收次数
+                - last_keyword_time: 最后关键词时间
+                - last_iat_time: 最后识别时间
+                - last_event_time: 最后事件时间
         """
-        # 生成流 ID（如果未提供）
-        if sid is None:
-            sid = str(uuid.uuid4())
-        
-        self.get_logger().info(f'正在播放文本: "{text[:50]}..." (force={force}, sid={sid})')
-        
-        # 创建请求
-        request = PlayText.Request()
-        request.sid = sid
-        request.seq = seq
-        request.last = last
-        request.force = force
-        request.text = text
-        request.token = token
-        request.output = output
-        
-        try:
-            # 同步调用服务
-            future = self.client.call_async(request)
-            
-            # 等待响应
-            rclpy.spin_until_future_complete(self, future, timeout_sec=timeout)
-            
-            if future.done():
-                response = future.result()
-                
-                # 检查响应状态码
-                if response.code == 0:  # CODE_OK
-                    self.get_logger().info(f'播放成功: {response.message} (sid={response.sid})')
-                    return (True, response.sid, response.message)
-                elif response.code == 1:  # CODE_INVALID_PARAMS
-                    self.get_logger().error(f'参数无效: {response.message}')
-                    return (False, response.sid, response.message)
-                else:  # CODE_FAILED
-                    self.get_logger().error(f'播放失败: {response.message}')
-                    return (False, response.sid, response.message)
-            else:
-                msg = f'服务调用超时 ({timeout} 秒)'
-                self.get_logger().error(msg)
-                return (False, sid, msg)
-                
-        except Exception as e:
-            msg = f'服务调用异常: {e}'
-            self.get_logger().error(msg)
-            import traceback
-            self.get_logger().error(traceback.format_exc())
-            return (False, sid, msg)
-    
-    def play_text_async(
-        self,
-        text: str,
-        callback=None,
-        force: bool = False,
-        sid: str = None,
-        **kwargs
-    ):
-        """
-        播放文本（异步调用）
-        
-        将文本发送到 TTS 服务，不阻塞等待响应。
-        可以提供回调函数处理响应结果。
-        
-        参数:
-            text (str): 要转换为语音的文本内容
-            callback (callable): 响应回调函数，签名为 callback(future)
-            force (bool): 是否强制播放，默认 False
-            sid (str): 流标识符，如果为 None 则自动生成
-            **kwargs: 其他参数（seq, last, token, output）
-        """
-        # 生成流 ID（如果未提供）
-        if sid is None:
-            sid = str(uuid.uuid4())
-        
-        self.get_logger().info(f'异步播放文本: "{text[:50]}..." (sid={sid})')
-        
-        # 创建请求
-        request = PlayText.Request()
-        request.sid = sid
-        request.seq = kwargs.get('seq', 0)
-        request.last = kwargs.get('last', True)
-        request.force = force
-        request.text = text
-        request.token = kwargs.get('token', '')
-        request.output = kwargs.get('output', '')
-        
-        # 异步调用服务
-        future = self.client.call_async(request)
-        
-        # 如果提供了回调函数，添加回调
-        if callback is not None:
-            future.add_done_callback(callback)
-        
-        return future
+        return {
+            'keyword_count': self.keyword_count,
+            'iat_count': self.iat_count,
+            'event_count': self.event_count,
+            'last_keyword_time': self.last_keyword_time,
+            'last_iat_time': self.last_iat_time,
+            'last_event_time': self.last_event_time
+        }
 
 
 def main(args=None):
     """
-    TTS 节点主函数
+    ASR 节点主函数
     
-    初始化 ROS2 上下文，创建 TTS 节点，并提供交互式测试。
-    
-    使用方法:
-        ros2 run sdk_demo audio_asr
-    
-    交互模式:
-        - 输入文本后按回车播放
-        - 输入 'exit' 或 'quit' 退出
-        - 输入 '!' 开头的文本进行强制打断播放
-    
-    退出:
-        按 Ctrl+C 或输入 exit/quit
+    初始化 ROS2 上下文，创建 ASR 节点并持续运行。
     """
     rclpy.init(args=args)
     
     try:
         # 创建节点
-        node = TTSNode()
+        node = ASRNode()
         
-        # 交互式测试模式
-        print("\n" + "=" * 60)
-        print("TTS 文本转语音节点已启动")
-        print("=" * 60)
-        print("使用说明:")
-        print("  - 输入文本后按回车进行播放")
-        print("  - 输入 '!' 开头的文本强制打断当前播放 (例如: !紧急消息)")
-        print("  - 输入 'exit' 或 'quit' 退出")
-        print("=" * 60 + "\n")
+        # 持续运行
+        rclpy.spin(node)
         
-        # 创建单独的线程处理 ROS2 回调
-        import threading
-        spin_thread = threading.Thread(target=lambda: rclpy.spin(node), daemon=True)
-        spin_thread.start()
-        
-        # 交互式输入循环
-        while rclpy.ok():
-            try:
-                user_input = input("请输入要播放的文本: ").strip()
-                
-                if not user_input:
-                    continue
-                
-                # 退出命令
-                if user_input.lower() in ['exit', 'quit', 'q']:
-                    print("正在退出...")
-                    break
-                
-                # 强制打断播放（以 '!' 开头）
-                force = False
-                if user_input.startswith('!'):
-                    force = True
-                    user_input = user_input[1:].strip()
-                    if not user_input:
-                        print("警告: 强制标记后没有文本内容")
-                        continue
-                
-                # 调用 TTS 播放
-                success, sid, message = node.play_text(user_input, force=force)
-                
-                if success:
-                    print(f"✓ 播放成功 (SID: {sid})")
-                else:
-                    print(f"✗ 播放失败: {message}")
-                    
-            except EOFError:
-                # Ctrl+D
-                print("\n检测到 EOF，正在退出...")
-                break
-            except KeyboardInterrupt:
-                # Ctrl+C
-                print("\n接收到键盘中断信号")
-                break
-        
-    except SystemExit:
-        # 节点初始化失败（服务不可用）
-        pass
+    except KeyboardInterrupt:
+        print("\n接收到键盘中断信号")
     except Exception as e:
         print(f"错误: {e}")
         import traceback
         traceback.print_exc()
     finally:
         if 'node' in locals():
+            # 输出最终统计
+            stats = node.get_statistics()
+            print("\n" + "=" * 60)
+            print("节点退出统计")
+            print("=" * 60)
+            print(f"唤醒关键词: {stats['keyword_count']} 次")
+            print(f"识别结果: {stats['iat_count']} 次")
+            print(f"系统事件: {stats['event_count']} 次")
+            print("=" * 60)
+            
             node.destroy_node()
+        
         rclpy.shutdown()
 
 
