@@ -1,20 +1,41 @@
 #!/usr/bin/env python3
 """
-音频播放器模块 (Audio Player Module)
+音频播放示例
 ====================================
 
-此模块提供了一个多线程音频播放器，支持实时音频流播放和文件播放。
+提供了一个音频播放节点和内置的简单音频播放器，支持实时音频流播放和文件播放。
+仅支持播放脚本所在前系统的音频文件，不支持播放其他设备的音频，例如当前脚本在41.2，则要播放的音频文件也必须在41.2上。
 
 主要功能:
     1. 实时音频流播放：接收音频字节流并实时播放
     2. 文件播放：支持 WAV、PCM、MP3 格式的音频文件播放
-    3. 多线程播放：后台线程自动处理音频播放队列
-    4. 问答管理：支持按问题文本管理不同的音频队列
-    5. 播放状态监控：可查询当前是否正在播放
+    3. 播放状态监控：可查询当前是否正在播放
 
 核心类:
     AudioPlayer: 主要的音频播放器类
+    AudioPlayerNode: ROS2 节点，内部持有 AudioPlayer 的实例
 
+工作流程:
+    1. 音频播放节点 AudioPlayerNode 接收到音频路径消息
+    2. 停止当前播放并清空队列
+    3. 设置新的音频id（使用时间戳区分）
+    4. 立即播放新音频
+
+使用示例:
+    # 先启动节点
+    ros2 run sdk_demo audio_player
+    
+    # 使用ros命令发送音频路径（另一个终端），最好是绝对路径，如果是相对路径，则需要是相对于执行 ros2 run sdk_demo audio_player 命令的目录的相对路径
+    ros2 topic pub /audio_file_path std_msgs/String "data: '/home/nvidia/sdk_demo/saved_data/audio_files/audio_134758915.wav'" --once
+    ros2 topic pub /audio_file_path std_msgs/String "data: '/home/nvidia/sdk_demo/saved_data/audio_files/audio_134758915.pcm'" --once
+
+注意:
+    - 新消息会立即打断当前播放
+    - 需要确保音频文件路径有效且可访问
+    - 节点退出时会自动释放音频资源
+    - 播放格式: float32, 22050Hz, 单声道
+    - 所有输入会自动转换为此格式
+    
 依赖项:
     - pyaudio: 音频播放库
     - numpy: 音频数据处理
@@ -26,13 +47,6 @@
     pip install pyaudio numpy
     pip install pydub  # 可选，用于 MP3 支持
     sudo apt install ffmpeg  # 可选，用于 MP3 解码
-
-技术说明:
----------
-音频格式:
-    - 播放格式: float32, 22050Hz, 单声道
-    - 所有输入会自动转换为此格式
-
 """
 import rclpy
 from rclpy.node import Node
@@ -43,9 +57,7 @@ import traceback
 import pyaudio
 from queue import Queue, Empty, Full
 import wave
-import os
 import time
-import argparse
 import logging
 from logging import StreamHandler, Formatter
 import numpy as np
@@ -133,14 +145,14 @@ class AudioPlayer:
     
     核心特性:
         - 自动音频格式转换（统一为 float32, 22050Hz, 单声道）
-        - 多问题场景支持（可按问题文本管理不同的音频队列）
+        - 多问题场景支持（可按音频id管理不同的音频队列）
         - 线程安全的音频队列管理
         - 实时播放状态监控
         - 支持多种音频格式（WAV、PCM、MP3）
     
     内部架构:
         - playing_thread: 后台播放线程，持续从队列获取音频并播放
-        - question_audio_map: 按问题文本组织的音频队列字典
+        - audioid_audio_map: 按音频id组织的音频队列字典
         - playing_stream: PyAudio 音频输出流
         - 多个锁保证线程安全
     
@@ -149,24 +161,6 @@ class AudioPlayer:
         采样率: 22050 Hz
         声道: 1 (单声道)
         缓冲区大小: 1024 帧
-    
-    使用示例:
-        >>> # 初始化播放器
-        >>> player = AudioPlayer()
-        >>> 
-        >>> # 播放音频流
-        >>> player.set_question_text("你好")
-        >>> player.play(audio_bytes)
-        >>> 
-        >>> # 播放音频文件
-        >>> player.play_by_path("audio.wav")
-        >>> 
-        >>> # 检查播放状态
-        >>> if player.is_speaking():
-        ...     print("正在播放")
-        >>> 
-        >>> # 清理资源
-        >>> player.close()
     
     注意事项:
         - 必须在使用完毕后调用 close() 释放资源
@@ -190,7 +184,7 @@ class AudioPlayer:
             - self.audio: PyAudio 实例
             - self.playing_stream: 音频输出流
             - self.playing_thread: 后台播放线程
-            - self.question_audio_map: 音频队列字典
+            - self.audioid_audio_map: 音频队列字典
             - 各种线程同步锁和事件
         
         异常:
@@ -203,11 +197,11 @@ class AudioPlayer:
         self.audio = pyaudio.PyAudio()
         self.device_info = self.audio.get_default_output_device_info()
         
-        # 问题文本管理
-        self.question_lock = threading.Lock()
-        self.question_audio_map_lock = threading.Lock()
-        self.question_text = ""  # 当前问题文本
-        self.question_audio_map = {}  # 问题 -> 音频队列的映射
+        # 音频id管理
+        self.audioid_lock = threading.Lock()
+        self.audioid_audio_map_lock = threading.Lock()
+        self.audioid = ""  # 当前音频的惟一标识即可，可用时间戳
+        self.audioid_audio_map = {}  # 音频id -> 音频队列的映射
 
         # 音频流管理
         self.stream_lock = threading.Lock()
@@ -231,57 +225,39 @@ class AudioPlayer:
         
         返回:
             bool: True 表示正在播放，False 表示空闲
-        
-        使用示例:
-            >>> if player.is_speaking():
-            ...     print("播放器正忙")
-            ... else:
-            ...     print("播放器空闲")
         """
         return self.is_speaking_event.is_set()
     
-    def set_question_text(self, text: str):
+    def set_audioid(self, text: str):
         """
-        设置当前问题文本并创建对应的音频队列
+        设置当前音频id并创建对应的音频队列
         
-        在多问题场景中，通过问题文本区分不同的音频队列。
-        相同问题文本的音频会按顺序播放，不同问题的音频互不干扰。
+        在多问题场景中，通过音频id区分不同的音频队列。
+        相同音频id的音频会按顺序播放，不同问题的音频互不干扰。
         
         参数:
-            text (str): 问题文本，作为音频队列的标识
+            text (str): 音频id，作为音频队列的标识
         
         功能:
-            1. 设置当前问题文本
+            1. 设置当前音频id
             2. 为该问题创建新的音频队列（如果不存在）
-        
-        线程安全: 使用锁保护，可从多线程调用
-        
-        使用示例:
-            >>> # 为每个对话回合设置问题
-            >>> player.set_question_text("今天天气怎么样？")
-            >>> player.play(answer_audio_1)
-            >>> player.play(answer_audio_2)  # 按顺序播放
-            >>> 
-            >>> # 切换到新问题
-            >>> player.set_question_text("明天天气如何？")
-            >>> player.play(new_answer_audio)  # 新队列
         """
-        with self.question_lock:
-            self.question_text = text
-        with self.question_audio_map_lock:
-            self.question_audio_map[text] = Queue()
+        with self.audioid_lock:
+            self.audioid = text
+        with self.audioid_audio_map_lock:
+            self.audioid_audio_map[text] = Queue()
 
-    def get_question_text(self) -> str:
+    def get_audioid(self) -> str:
         """
-        获取当前问题文本
+        获取当前音频id
         
         返回:
-            str: 当前设置的问题文本
+            str: 当前设置的音频id
         
         线程安全: 使用锁保护，可从多线程调用
         """
-        with self.question_lock:
-            return self.question_text
+        with self.audioid_lock:
+            return self.audioid
         
     def open_stream(self):
         """
@@ -345,7 +321,7 @@ class AudioPlayer:
         停止其他问题的音频队列，保留当前问题的队列
         
         此方法会：
-            1. 获取当前问题文本
+            1. 获取当前音频id
             2. 清空除当前问题外的所有音频队列
             3. 清除播放状态标志
         
@@ -359,13 +335,13 @@ class AudioPlayer:
             - 只删除其他问题的队列，不影响当前问题
             - 会清除 is_speaking 标志
         """
-        question_text = self.get_question_text()
-        with self.question_audio_map_lock:
-            for q_text in list(self.question_audio_map.keys()):
-                if q_text == question_text:
+        audioid = self.get_audioid()
+        with self.audioid_audio_map_lock:
+            for q_text in list(self.audioid_audio_map.keys()):
+                if q_text == audioid:
                     continue
                 try:
-                    del self.question_audio_map[q_text]
+                    del self.audioid_audio_map[q_text]
                 except KeyError:
                     pass
 
@@ -390,13 +366,6 @@ class AudioPlayer:
             - 必须在程序结束前调用，否则可能导致资源泄漏
             - 关闭后的播放器实例不可再使用
             - 建议使用 with 语句或 try-finally 确保调用
-        
-        使用示例:
-            >>> player = AudioPlayer()
-            >>> try:
-            ...     player.play(audio_data)
-            ... finally:
-            ...     player.close()  # 确保资源被释放
         """
         self.stop_event.set()
         self.playing_thread.join(timeout=2)
@@ -407,7 +376,7 @@ class AudioPlayer:
 
         self.audio.terminate()
 
-    def try_put(self, question_text: str, audio_data: bytes):
+    def try_put(self, audioid: str, audio_data: bytes):
         """
         尝试将音频数据放入指定问题的队列
         
@@ -417,7 +386,7 @@ class AudioPlayer:
             3. 如果队列满了，删除最旧的音频，再放入新音频
         
         参数:
-            question_text (str): 问题文本，作为队列标识
+            audioid (str): 音频id，作为队列标识
             audio_data (bytes): 音频数据（float32 格式）
         
         队列管理:
@@ -431,11 +400,11 @@ class AudioPlayer:
             - 此方法为内部方法，通常不直接调用
             - 请使用 play() 方法进行播放
         """
-        if question_text not in self.question_audio_map:
-            with self.question_audio_map_lock:
-                if question_text not in self.question_audio_map:
-                    self.question_audio_map[question_text] = Queue()
-        queue = self.question_audio_map[question_text]
+        if audioid not in self.audioid_audio_map:
+            with self.audioid_audio_map_lock:
+                if audioid not in self.audioid_audio_map:
+                    self.audioid_audio_map[audioid] = Queue()
+        queue = self.audioid_audio_map[audioid]
         try:
             queue.put(audio_data, timeout=1)
         except Full:
@@ -453,23 +422,16 @@ class AudioPlayer:
                                (22050Hz 采样率，单声道)
         
         工作流程:
-            1. 获取当前问题文本
+            1. 获取当前音频id
             2. 将音频数据放入该问题的队列
             3. 后台播放线程自动从队列取出并播放
-        
-        使用示例:
-            >>> # 设置问题后播放多段音频
-            >>> player.set_question_text("你好")
-            >>> player.play(audio_chunk_1)
-            >>> player.play(audio_chunk_2)  # 会在 chunk_1 播放完后自动播放
-            >>> player.play(audio_chunk_3)
         
         注意:
             - 音频会按添加顺序播放（FIFO）
             - 不会阻塞调用线程
             - 音频格式必须正确，否则播放会失败
         """
-        self.try_put(self.get_question_text(), audio_data)
+        self.try_put(self.get_audioid(), audio_data)
 
     def play_by_path(self, file_path: str):
         """
@@ -493,10 +455,6 @@ class AudioPlayer:
             - FileNotFoundError: 文件不存在
             - ValueError: 不支持的文件格式
             - Exception: 音频处理或播放错误
-        
-        示例：
-            player.play_by_path("audio.wav")  # 相对路径
-            player.play_by_path("/tmp/audio.mp3")  # 绝对路径
         """
         # 转换为Path对象，支持相对路径和绝对路径
         audio_path = Path(file_path)
@@ -748,11 +706,6 @@ class AudioPlayer:
             - 如果采样率相同，直接返回原数组
             - 线性插值可能不是最优质量，如需更高质量可使用 librosa
             - 适合语音类音频，对音乐质量要求高的场景建议使用专业库
-        
-        使用示例:
-            >>> # 从 16000Hz 重采样到 22050Hz
-            >>> audio_16k = np.array([...], dtype=np.float32)
-            >>> audio_22k = player._resample(audio_16k, 16000, 22050)
         """
         if orig_sr == target_sr:
             return audio_array
@@ -788,7 +741,7 @@ class AudioPlayer:
         
         线程同步:
             - 使用 stream_lock 保护流操作
-            - 使用 question_audio_map_lock 访问队列字典
+            - 使用 audioid_audio_map_lock 访问队列字典
         
         错误处理:
             - 捕获所有播放异常，记录日志但不中断循环
@@ -811,14 +764,14 @@ class AudioPlayer:
             
             queue = None
             try:
-                # 获取当前问题文本
-                q_text = self.get_question_text()
-                if q_text not in self.question_audio_map:
+                # 获取当前音频id
+                q_text = self.get_audioid()
+                if q_text not in self.audioid_audio_map:
                     time.sleep(0.01)  # 队列不存在，短暂休眠
                     continue
                 
                 # 获取音频队列
-                queue = self.question_audio_map.get(q_text)
+                queue = self.audioid_audio_map.get(q_text)
                 if queue is None:
                     time.sleep(0.01)
                     continue
@@ -859,23 +812,6 @@ class AudioPlayerNode(Node):
             - 消息内容: 音频文件的绝对路径或相对路径
             - 支持格式: .wav, .pcm, .mp3
     
-    工作流程:
-        1. 接收到音频路径消息
-        2. 停止当前播放并清空队列
-        3. 设置新的问题文本（使用时间戳区分）
-        4. 立即播放新音频
-    
-    使用示例:
-        # 启动节点
-        ros2 run sdk_demo audio_player
-        
-        # 发送音频路径（另一个终端）
-        ros2 topic pub /audio_file_path std_msgs/String "data: '/path/to/audio.wav'" --once
-    
-    注意:
-        - 新消息会立即打断当前播放
-        - 需要确保音频文件路径有效且可访问
-        - 节点退出时会自动释放音频资源
     """
     
     def __init__(self):
@@ -932,10 +868,10 @@ class AudioPlayerNode(Node):
             # 停止当前播放并清空所有队列（实现打断功能）
             self.audio_player.stop_other_audio_and_clear_queue()
             
-            # 使用时间戳作为问题标识，确保每次播放使用新队列
+            # 使用时间戳作为音频id，确保每次播放使用新队列
             timestamp = time.time()
-            question_text = f"audio_play_{timestamp}"
-            self.audio_player.set_question_text(question_text)
+            audioid = f"audio_play_{timestamp}"
+            self.audio_player.set_audioid(audioid)
             
             # 播放新的音频文件
             self.audio_player.play_by_path(audio_path)
@@ -968,19 +904,6 @@ def main(args=None):
     ROS2 节点主函数
     
     初始化 ROS2 上下文，创建并运行音频播放节点。
-    
-    参数:
-        args: 命令行参数（可选）
-    
-    使用方法:
-        # 直接运行
-        python3 9_audio_player.py
-        
-        # 或通过 ros2 run
-        ros2 run sdk_demo audio_player
-    
-    退出:
-        按 Ctrl+C 优雅退出
     """
     rclpy.init(args=args)
     

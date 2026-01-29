@@ -18,7 +18,7 @@
        source install/setup.bash
 
     4. 播放保存的PCM文件（Linux系统）：
-       aplay -f S16_LE -r 16000 -c 1 audio_165959906.pcm
+       aplay -f S16_LE -r 16000 -c 1 audio_134758915.pcm
 
     5. 调整音量：
        # 音量调整到100%
