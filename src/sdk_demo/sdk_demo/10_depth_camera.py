@@ -168,7 +168,7 @@ class DepthCameraNode(Node):
         
         # 等待话题发现，最多重试5次
         max_retries = 5
-        retry_delay = 0.8  # 每次重试间隔0.8秒
+        retry_delay = 1.0  # 每次重试间隔1.0秒
         
         for attempt in range(max_retries):
             # 获取当前ROS2系统中所有可用的话题列表
