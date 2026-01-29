@@ -16,12 +16,15 @@
    查看头部相机（默认）:
      ros2 run sdk_demo depth_camera
      ros2 run sdk_demo depth_camera --camera head
+     实测在41.2上可同时用rqt_image_view查看图像与保存图片，在41.3上则rqt_image_view会无法查看图像，但图片仍会保存。
    
    查看腰部相机:
      ros2 run sdk_demo depth_camera --camera waist
+     实测在41.3上可同时用rqt_image_view查看图像与保存图片，在41.2上则rqt_image_view会无法查看图像，但图片仍会保存。
    
    查看背部相机:
      ros2 run sdk_demo depth_camera --camera back
+     实测在41.3上可同时用rqt_image_view查看图像与保存图片，在41.2上则rqt_image_view会无法查看图像，但图片仍会保存。
 
 3. 图片保存位置:
    保存在源代码目录下的 10_depth_camera_imgs/ 文件夹中
