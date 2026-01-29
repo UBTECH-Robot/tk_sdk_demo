@@ -316,28 +316,43 @@ class DepthCameraNode(Node):
         
         支持常见的彩色图像编码格式，如bgr8、rgb8等。
         
+        注意：在不同的ROS2环境中，ros_image.data可能是bytes或array.array类型，
+        需要进行统一的类型转换以确保兼容性。
+        
         Args:
             ros_image: ROS2 Image消息，包含彩色图像数据
             
         Returns:
             PIL.Image: RGB格式的PIL Image对象
         """
+        # 确保data是bytes类型
+        # 在某些环境中ros_image.data是array.array，需要转换为bytes
+        if hasattr(ros_image.data, 'tobytes'):
+            # array.array类型，使用tobytes()方法
+            image_data = ros_image.data.tobytes()
+        else:
+            # 已经是bytes类型，或者可以直接转换
+            image_data = bytes(ros_image.data)
+        
         # BGR8格式：OpenCV常用的格式，需要转换为RGB
         if ros_image.encoding == 'bgr8':
             # frombytes创建图像，'raw'表示原始数据，'BGR'指定字节顺序
-            image = PILImage.frombytes('RGB', (ros_image.width, ros_image.height), ros_image.data, 'raw', 'BGR')
+            image = PILImage.frombytes('RGB', (ros_image.width, ros_image.height), image_data, 'raw', 'BGR')
             return image
         # RGB8格式：已经是RGB格式，直接转换
         elif ros_image.encoding == 'rgb8':
-            return PILImage.frombytes('RGB', (ros_image.width, ros_image.height), ros_image.data)
+            return PILImage.frombytes('RGB', (ros_image.width, ros_image.height), image_data)
         # 其他格式：默认按RGB处理
         else:
-            return PILImage.frombytes('RGB', (ros_image.width, ros_image.height), ros_image.data)
+            return PILImage.frombytes('RGB', (ros_image.width, ros_image.height), image_data)
     
     def _ros_depth_to_pil(self, ros_image):
         """将ROS2深度图消息转换为PIL Image对象
         
         支持常见的深度图像编码格式，如16UC1（16位无符号整数）、mono16等。
+        
+        注意：在不同的ROS2环境中，ros_image.data可能是bytes或array.array类型，
+        需要进行统一的类型转换以确保兼容性。
         
         Args:
             ros_image: ROS2 Image消息，包含深度图像数据
@@ -347,12 +362,21 @@ class DepthCameraNode(Node):
         """
         width, height = ros_image.width, ros_image.height
         
+        # 确保data是bytes类型
+        # 在某些环境中ros_image.data是array.array，需要转换为bytes
+        if hasattr(ros_image.data, 'tobytes'):
+            # array.array类型，使用tobytes()方法
+            image_data = ros_image.data.tobytes()
+        else:
+            # 已经是bytes类型，或者可以直接转换
+            image_data = bytes(ros_image.data)
+        
         # 16UC1或mono16：16位深度值，每个像素2字节
         if ros_image.encoding in ['16UC1', 'mono16']:
-            return PILImage.frombytes('I;16', (width, height), ros_image.data)
+            return PILImage.frombytes('I;16', (width, height), image_data)
         # 其他格式：默认按8位灰度处理
         else:
-            return PILImage.frombytes('L', (width, height), ros_image.data)
+            return PILImage.frombytes('L', (width, height), image_data)
     
     def _depth_to_colormap(self, depth_image):
         """将深度图转换为彩色热力图
