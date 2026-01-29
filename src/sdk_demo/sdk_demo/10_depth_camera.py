@@ -167,6 +167,7 @@ class DepthCameraNode(Node):
         # 获取当前ROS2系统中所有可用的话题列表
         topic_names_and_types = self.get_topic_names_and_types()
         available_topics = [name for name, _ in topic_names_and_types]
+        self.get_logger().info(f'可用的话题: {available_topics}')
         
         # 遍历所有相机配置
         for camera_id, config in self.CAMERA_CONFIGS.items():
