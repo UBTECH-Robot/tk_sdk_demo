@@ -31,6 +31,8 @@ setup(
             'leg_motor_control = sdk_demo.8_leg_motor_control:main',
             'audio_saver = sdk_demo.9_audio_saver:main',
             'audio_player = sdk_demo.9_audio_player:main',
+            'audio_asr = sdk_demo.9_audio_asr:main',
+            'audio_tts = sdk_demo.9_audio_tts:main',
             'depth_camera = sdk_demo.10_depth_camera:main',
             'hand_control = sdk_demo.11_hand_control:main',
             'hand_status = sdk_demo.11_hand_status:main',

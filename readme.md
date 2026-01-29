@@ -21,11 +21,11 @@ ros2 pkg create sdk_demo --build-type ament_python --dependencies rclpy geometry
 
 在有了工程项目后，可在 src/sdk_demo/sdk_demo/ 目录下新建 ros2 的 python 文件，编写 ros2 的 python 代码
 
-如：5_6_2_1_arm_control_demo.py
+如：9_audio_asr.py
 
 然后在 src/sdk_demo/setup.py 文件里的 entry_points.console_scripts 数组内相应位置增加一行入口，例如：
 ```python
-'arm_control_demo = sdk_demo.5_6_2_1_arm_control_demo:main',
+'audio_tts = sdk_demo.9_audio_tts:main',
 ```
 
 ### 4，编译
@@ -50,8 +50,7 @@ colcon build --packages-select sdk_demo
 
 运行示例代码：
 ```bash
-ros2 run sdk_demo arm_control_demo
-ros2 run sdk_demo rl_cmd_control_test
+ros2 run sdk_demo audio_tts
 ```
 
 
