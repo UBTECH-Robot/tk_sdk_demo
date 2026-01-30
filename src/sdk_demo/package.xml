@@ -4,7 +4,7 @@
   <name>sdk_demo</name>
   <version>0.0.0</version>
   <description>TODO: Package description</description>
-  <maintainer email="kai.yang@x-humanoid.com">ubuntu</maintainer>
+  <maintainer email="">ubuntu</maintainer>
   <license>TODO: License declaration</license>
 
   <depend>rclpy</depend>
