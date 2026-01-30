@@ -18,6 +18,9 @@
     
     仅执行回零示例：
         ros2 run sdk_demo arm_motor_control home
+
+    仅右手挥手示例：
+        ros2 run sdk_demo arm_motor_control wave
     
     标零示例（实际应用中，标零接口必须配合标零工具使用！否则可能导致电机位置错误，影响机器人正常运行）：
         ros2 run sdk_demo arm_motor_control zero
@@ -96,6 +99,22 @@ motor_angle_limits_dict = {
     27: [-75, 95, 30],     # 右腕关节翻滚 Right Wrist Roll）: -75度到+95度，仅无疆版本支持
 }
 # 运动超过范围则电机会断开连接，无法再被控制，可手动将电机复位到合理位置后重启机器人本体服务(注意确保重启时机器人是安全固定在移位机上的)
+
+wave_right_arm_motor_pos_list = [
+  {"duration": 1.5, 21: 2.951215,    22: -7.782454, 23: -17.252648, 24: -17.236174,  25: -17.010969,  26: -16.336146, 27: 8.412006  },
+  {"duration": 1.5, 21: 27.949216,   22: -3.690023, 23: -12.126181, 24: -77.161084,  25: -11.480701,  26: -5.902431,  27: -0.522127  },
+  {"duration": 3, 21: 18.90610,    22: -3.690023, 23: -15.909614, 24: -127.037666, 25: 64.002233,   26: 1.032424,   27: -6.064361  },
+  {"duration": 1.5, 21: 10.007183,   22: -3.685953, 23: -15.386394, 24: -141.891197, 25: 60.680248,   26: 0.803503,   27: -27.170629  },
+  {"duration": 1.5, 21: 5.982044,    22: -3.690023, 23: 2.888050,   24: -136.061548, 25: 86.319603,   26: 6.234351,   27: -38.185347  },
+  {"duration": 1.5, 21: 5.986169,    22: -3.690023, 23: 17.748438,  24: -136.207113, 25: 86.32646,    26: 8.82078,    27: -37.248546  },
+  {"duration": 1.5, 21: 5.983464,    22: -3.688657, 23: -13.947137, 24: -135.379021, 25: 64.947039,   26: 1.267984,   27: -36.4157  },
+  {"duration": 1.5, 21: 5.986169,    22: -3.687319, 23: 17.984653,  24: -139.564834, 25: 86.98153,    26: 8.169097,   27: -35.539933  },
+  {"duration": 1.5, 21: 5.979339,    22: -3.685953, 23: -15.70908,  24: -134.962926, 25: 71.510032,   26: 3.035937,   27: -36.259125  },
+  {"duration": 1.5, 21: 5.982044,    22: -3.690023, 23: 13.491208,  24: -139.251738, 25: 89.305161,   26: 11.777213,  27: -36.517989  },
+  {"duration": 3, 21: 5.979339,    22: -3.685953, 23: -25.853577, 24: -134.719881, 25: 63.826451,   26: -0.715394,  27: -36.52695  },
+  {"duration": 1.5, 21: 23.643957,   22: -5.736266, 23: -5.968329,  24: -86.936205,  25: 17.887118,   26: -6.182032,  27: -3.912086  },
+  {"duration": 1.5, 21: 5.266568,    22: -4.129478, 23: -13.249501, 24: -34.026063,  25: -7.266065,   26: -11.226645, 27: -1.407702  }
+]
 
 # 电机ID列表，用于批量控制
 # arm_MOTOR_IDS = [11, 12, 13, 14, 15, 16, 17]
@@ -255,6 +274,47 @@ class ArmMotorController(Node):
         self.get_logger().info("✓ 双腿安全位置命令已发送")
         
         time.sleep(3)  # 给电机足够的时间运动到零位
+
+    def wave(self):
+        self.leg_safe()
+        self.leg_safe()
+
+        self.get_logger().info("")
+        self.get_logger().info("=" * 50)
+        self.get_logger().info("【挥手】开始执行")
+        self.get_logger().info("=" * 50)
+        
+        for pos in wave_right_arm_motor_pos_list:
+            # 创建消息头
+            header = self.create_header()
+            
+            # 创建位置模式命令消息
+            msg = CmdSetMotorPosition()
+            msg.header = header
+            
+            # 为每个电机创建位置命令
+            for motor_id in arm_MOTOR_IDS:
+                if motor_id not in pos:
+                    continue
+                
+                cmd = SetMotorPosition()
+                cmd.name = motor_id  # 电机ID
+
+                motor_pos_degree = pos[motor_id]
+                target_pos = motor_pos_degree * math.pi / 180.0 
+
+                cmd.pos = target_pos  # 目标位置（弧度）
+                cmd.spd = 0.4  # 速度限制（弧度/秒）
+                cmd.cur = CURRENT_LIMIT  # 电流限制（安培）
+                
+                # 添加到消息数组
+                msg.cmds.append(cmd)
+                
+                self.get_logger().info(f"  电机 {motor_id}：运动到{motor_pos_degree}度")
+            
+            # 发送命令
+            self.pos_cmd_publisher.publish(msg)            
+            time.sleep(pos["duration"])  # 给电机足够的时间运动到指定位置
 
     def homing(self):
         """
@@ -713,6 +773,9 @@ def main(args=None):
             # 仅回零
             elif arg in ["homing", "home", "h"]:
                 mode = "homing"
+            # 仅右手挥手
+            elif arg in ["waving", "wave", "w"]:
+                mode = "waving"
             # 双腿安全位置
             elif arg in ["leg_safe", "leg", "l"]:
                 mode = "leg_safe"
@@ -770,7 +833,10 @@ def main(args=None):
         if mode == "homing":
             # 仅执行回零
             controller.homing()
-            
+        elif mode == "waving":
+            # 仅右手挥手
+            controller.wave()
+            time.sleep(3)
         elif mode == "leg_safe":
             # 双腿电机到安全位置
             controller.leg_safe()
