@@ -25,6 +25,12 @@ import math
 import rclpy
 from rclpy.node import Node
 import sys
+import argparse
+import json
+import csv
+import os
+import threading
+from datetime import datetime
 from bodyctrl_msgs.msg import MotorStatusMsg, MotorStatus
 
 # 定义各个关节的电机状态话题名称
@@ -77,24 +83,31 @@ class MotorStatusMonitor(Node):
     可以根据命令行参数选择订阅不同关节的电机状态话题
     """
     
-    def __init__(self):
+    def __init__(self, joint_name='waist', record_mode=False):
         """
         初始化电机状态监控节点
+        
+        参数：
+            joint_name (str): 要监控的关节名称（waist/arm/leg/head）
+            record_mode (bool): 是否启用记录模式（-r参数）
         
         功能：
             1. 调用父类构造函数，创建名为'motor_status_monitor'的节点
             2. 根据命令行参数确定要订阅的话题
             3. 创建话题订阅器
             4. 输出提示信息
+            5. 如果启用记录模式，初始化数据存储和输入监听
         """
         # 初始化节点，节点名称为'motor_status_monitor'
         super().__init__('motor_status_monitor')
         
-        # 从命令行参数中获取关节名称
-        # 如果提供了命令行参数，使用该参数对应的话题；否则使用默认的腰部话题
-        # sys.argv[1] 是第一个命令行参数
-        # 例如：脚本执行命令为 'python script.py arm' 时，sys.argv[1] = 'arm'
-        joint_name = sys.argv[1] if len(sys.argv) > 1 else 'waist'
+        # 记录模式标志和数据存储
+        self.record_mode = record_mode
+        self.joint_name = joint_name
+        self.recorded_data = []  # 存储记录的电机状态数据
+        self.latest_msg = None   # 存储最新接收的消息
+        self.record_trigger = False  # 记录触发标志
+        self.lock = threading.Lock()  # 线程锁，保护共享数据
         
         # 从话题映射字典中获取对应的话题名称，默认为腰部话题
         topic_name = topic_map.get(joint_name, topic1)
@@ -113,8 +126,33 @@ class MotorStatusMonitor(Node):
         )
         
         # 打印日志，提示已开始订阅指定话题
-        self.get_logger().info(f"已开始订阅话题 {topic_name}，监控电机状态信息")
+        if self.record_mode:
+            self.get_logger().info(f"已开始订阅话题 {topic_name}，记录模式已启用（按 'r' 键记录数据）")
+            # 启动键盘输入监听线程
+            self.input_thread = threading.Thread(target=self._input_listener, daemon=True)
+            self.input_thread.start()
+        else:
+            self.get_logger().info(f"已开始订阅话题 {topic_name}，监控电机状态信息")
 
+    def _input_listener(self):
+        """
+        键盘输入监听线程函数
+        
+        在记录模式下，持续监听用户输入，当用户按下 'r' 键时触发记录
+        """
+        print("\n提示：按 'r' 键记录当前电机状态，按 Ctrl+C 退出并保存数据\n")
+        while True:
+            try:
+                user_input = input().strip().lower()
+                if user_input == 'r':
+                    with self.lock:
+                        self.record_trigger = True
+            except EOFError:
+                # 处理输入流结束的情况
+                break
+            except Exception as e:
+                self.get_logger().error(f"输入监听出错: {str(e)}")
+    
     def status_callback(self, msg: MotorStatusMsg):
         """
         电机状态消息回调函数
@@ -137,49 +175,132 @@ class MotorStatusMonitor(Node):
         """
         try:
             # 检查消息对象是否有status属性
-            # 正常情况下，MotorStatusMsg消息应该包含status数组
-            if hasattr(msg, 'status'):
-                # 获取电机状态数组
-                motor_array = msg.status
-                
-                # 只有当有电机数据时才打印表头
-                if not motor_array:
-                    return
-                
-                # ========== 打印表格标题（仅打印一次）==========
-                print("\n" + "="*100)
-                print(f"{'电机ID':<10} {'位置(rad)':<15} {'位置(deg)':<15} {'速度(rad/s)':<15} "
-                      f"{'电流(A)':<12} {'温度(℃)':<12} {'错误信息':<20}")
-                print("-"*100)
-                
-                # ========== 遍历各电机，以表格行形式打印数据 ==========
-                for motor in motor_array:
-                    # 将弧度转换为角度
-                    degree = radians_to_degrees(motor.pos)
-                    
-                    # 获取错误说明
-                    error_message = ERROR_CODE_MAP.get(motor.error, "未知错误")
-                    
-                    # 如果有错误，添加警告标记
-                    if motor.error != 0:
-                        error_display = f"⚠️ {error_message}"
-                    else:
-                        error_display = error_message
-                    
-                    # 以表格行形式打印数据
-                    print(f"{motor.name:<10} {motor.pos:<18.3f} {degree:<18.3f} {motor.speed:<18.3f} "
-                          f"{motor.current:<18.2f} {motor.temperature:<18.1f} {error_display:<20}")
-                
-                # 表格底部分隔线
-                print("="*100)
-                
-            else:
-                # 备用处理方式：如果消息格式不符合预期
+            if not hasattr(msg, 'status'):
                 print("接收到的消息格式不符合预期，缺少status字段")
+                return
+            
+            motor_array = msg.status
+            if not motor_array:
+                return
+            
+            # 记录模式：只保存最新消息，等待用户触发打印和记录
+            if self.record_mode:
+                with self.lock:
+                    self.latest_msg = msg
+                    
+                    # 检查是否触发记录
+                    if self.record_trigger:
+                        self.record_trigger = False
+                        self._print_and_record_status(motor_array)
+            else:
+                # 普通模式：持续打印
+                self._print_status(motor_array)
                 
         except Exception as e:
             # 捕获并打印异常信息
             self.get_logger().error(f"处理电机状态消息时出错: {str(e)}")
+    
+    def _print_status(self, motor_array):
+        """
+        打印电机状态信息（普通模式）
+        
+        参数：
+            motor_array: 电机状态数组
+        """
+        # ========== 打印表格标题 ==========
+        print("\n" + "="*100)
+        print(f"{'电机ID':<10} {'位置(rad)':<15} {'位置(deg)':<15} {'速度(rad/s)':<15} "
+              f"{'电流(A)':<12} {'温度(℃)':<12} {'错误信息':<20}")
+        print("-"*100)
+        
+        # ========== 遍历各电机，以表格行形式打印数据 ==========
+        for motor in motor_array:
+            degree = radians_to_degrees(motor.pos)
+            error_message = ERROR_CODE_MAP.get(motor.error, "未知错误")
+            error_display = f"⚠️ {error_message}" if motor.error != 0 else error_message
+            
+            print(f"{motor.name:<10} {motor.pos:<18.3f} {degree:<18.3f} {motor.speed:<18.3f} "
+                  f"{motor.current:<18.2f} {motor.temperature:<18.1f} {error_display:<20}")
+        
+        print("="*100)
+    
+    def _print_and_record_status(self, motor_array):
+        """
+        打印并记录电机状态信息（记录模式）
+        
+        参数：
+            motor_array: 电机状态数组
+        """
+        # 打印状态
+        self._print_status(motor_array)
+        
+        # 记录数据到列表
+        record_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "joint_name": self.joint_name,
+            "motors": []
+        }
+        
+        for motor in motor_array:
+            motor_data = {
+                "id": int(motor.name),
+                "pos_rad": round(float(motor.pos), 6),
+                "pos_deg": round(float(radians_to_degrees(motor.pos)), 6),
+                # "speed_rad_s": round(float(motor.speed), 6),
+                # "cur_a": round(float(motor.current), 6),
+                # "temper_c": round(float(motor.temperature), 6),
+                # "err": int(motor.error),
+            }
+            record_entry["motors"].append(motor_data)
+        
+        self.recorded_data.append(record_entry)
+        self.get_logger().info(f"已记录第 {len(self.recorded_data)} 条数据")
+    
+    def save_recorded_data(self):
+        """
+        保存记录的数据到CSV文件
+        
+        文件保存路径：saved_data/5_motor_saved_status/
+        文件名格式：{joint_name}_{timestamp}.csv
+        """
+        if not self.recorded_data:
+            self.get_logger().info("没有记录数据，跳过保存")
+            return
+        
+        # 创建保存目录
+        save_dir = "saved_data/5_motor_saved_status"
+        os.makedirs(save_dir, exist_ok=True)
+        
+        # 生成文件名（包含关节名称和时间戳）
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{self.joint_name}_{timestamp}.csv"
+        filepath = os.path.join(save_dir, filename)
+        
+        # 保存数据为CSV格式
+        try:
+            with open(filepath, 'w', encoding='utf-8', newline='') as f:
+                # 写入表头（对齐格式）
+                header = f"{'timestamp':<26},{'joint_name':<10},{'motor_id':<8},{'pos_rad':<10},{'pos_deg':<12}\n"
+                f.write(header)
+                
+                # 写入数据行
+                for record in self.recorded_data:
+                    timestamp_str = record['timestamp']
+                    joint_name = record['joint_name']
+                    
+                    # 每个电机写一行（对齐格式）
+                    for motor in record['motors']:
+                        line = f"{timestamp_str:<26},{joint_name:<10},{motor['id']:<8},{motor['pos_rad']:<10},{motor['pos_deg']:<12}\n"
+                        f.write(line)
+                    
+                    # 每条记录后插入空行分隔
+                    f.write('\n')
+            
+            self.get_logger().info(f"已保存 {len(self.recorded_data)} 条记录到: {filepath}")
+            print(f"\n数据已保存到: {filepath}")
+                        
+        except Exception as e:
+            self.get_logger().error(f"保存数据失败: {str(e)}")
 
 def main(args=None):
     """
@@ -189,17 +310,49 @@ def main(args=None):
         args: 命令行参数，默认为None
         
     功能：
-        1. 初始化ROS2客户端库
-        2. 创建电机状态监控节点
-        3. 启动节点循环，持续接收和处理消息
-        4. 处理键盘中断（Ctrl+C）
-        5. 清理资源并关闭ROS2
+        1. 解析命令行参数
+        2. 初始化ROS2客户端库
+        3. 创建电机状态监控节点
+        4. 启动节点循环，持续接收和处理消息
+        5. 处理键盘中断（Ctrl+C）
+        6. 保存记录数据（如果启用记录模式）
+        7. 清理资源并关闭ROS2
     """
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(
+        description="电机状态监控演示脚本",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例用法：\n"
+               "  持续监控腰部电机：ros2 run sdk_demo motor_status_demo\n"
+               "  持续监控手臂电机：ros2 run sdk_demo motor_status_demo arm\n"
+               "  记录模式监控腿部：ros2 run sdk_demo motor_status_demo leg -r\n"
+               "  记录模式监控头部：ros2 run sdk_demo motor_status_demo head -r"
+    )
+    
+    parser.add_argument(
+        'joint',
+        nargs='?',
+        default='waist',
+        choices=['waist', 'arm', 'leg', 'head'],
+        help="要监控的关节部位（默认：waist）"
+    )
+    
+    parser.add_argument(
+        '-r', '--record',
+        action='store_true',
+        help="启用记录模式：按 'r' 键记录数据，退出时保存为JSON文件"
+    )
+    
+    parsed_args = parser.parse_args(args)
+    
     # 初始化ROS2的Python客户端库
     rclpy.init(args=args)
     
     # 创建电机状态监控节点实例
-    node = MotorStatusMonitor()
+    node = MotorStatusMonitor(
+        joint_name=parsed_args.joint,
+        record_mode=parsed_args.record
+    )
     
     try:
         # 启动节点循环，持续处理回调函数
@@ -207,8 +360,12 @@ def main(args=None):
         rclpy.spin(node)
     except KeyboardInterrupt:
         # 捕获键盘中断（Ctrl+C），允许用户优雅地退出程序
-        pass
+        print("\n程序被用户中断")
     finally:
+        # 如果是记录模式，保存数据
+        if node.record_mode:
+            node.save_recorded_data()
+        
         # 销毁节点，释放相关资源
         node.destroy_node()
         
@@ -216,7 +373,5 @@ def main(args=None):
         rclpy.shutdown()
 
 
-# Python脚本入口点
-# 该脚本作为独立程序运行时会执行main()函数
 if __name__ == '__main__':
     main()
