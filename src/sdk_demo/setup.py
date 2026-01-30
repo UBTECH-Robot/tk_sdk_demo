@@ -16,7 +16,7 @@ setup(
     install_requires=['setuptools', 'Pillow'],
     zip_safe=True,
     maintainer='ubuntu',
-    maintainer_email='kai.yang@x-humanoid.com',
+    maintainer_email='han.li@ubtrobot.com',
     description='TODO: Package description',
     license='TODO: License declaration',
     entry_points={
