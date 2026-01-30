@@ -27,7 +27,6 @@ from rclpy.node import Node
 import sys
 import argparse
 import json
-import csv
 import os
 import threading
 from datetime import datetime
@@ -235,33 +234,19 @@ class MotorStatusMonitor(Node):
         self._print_status(motor_array)
         
         # 记录数据到列表
-        record_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "joint_name": self.joint_name,
-            "motors": []
-        }
-        
+        motor_data = {}
         for motor in motor_array:
-            motor_data = {
-                "id": int(motor.name),
-                "pos_rad": round(float(motor.pos), 6),
-                "pos_deg": round(float(radians_to_degrees(motor.pos)), 6),
-                # "speed_rad_s": round(float(motor.speed), 6),
-                # "cur_a": round(float(motor.current), 6),
-                # "temper_c": round(float(motor.temperature), 6),
-                # "err": int(motor.error),
-            }
-            record_entry["motors"].append(motor_data)
+            motor_data[motor.name] = round(float(radians_to_degrees(motor.pos)), 6)
         
-        self.recorded_data.append(record_entry)
+        self.recorded_data.append(motor_data)
         self.get_logger().info(f"已记录第 {len(self.recorded_data)} 条数据")
     
     def save_recorded_data(self):
         """
-        保存记录的数据到CSV文件
+        保存记录的数据到JSON文件
         
         文件保存路径：saved_data/5_motor_saved_status/
-        文件名格式：{joint_name}_{timestamp}.csv
+        文件名格式：{joint_name}_{timestamp}.json
         """
         if not self.recorded_data:
             self.get_logger().info("没有记录数据，跳过保存")
@@ -273,32 +258,15 @@ class MotorStatusMonitor(Node):
         
         # 生成文件名（包含关节名称和时间戳）
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{self.joint_name}_{timestamp}.csv"
+        filename = f"{self.joint_name}_{timestamp}.json"
         filepath = os.path.join(save_dir, filename)
         
-        # 保存数据为CSV格式
+        # 保存数据
         try:
-            with open(filepath, 'w', encoding='utf-8', newline='') as f:
-                # 写入表头（对齐格式）
-                header = f"{'timestamp':<26},{'joint_name':<10},{'motor_id':<8},{'pos_rad':<10},{'pos_deg':<12}\n"
-                f.write(header)
-                
-                # 写入数据行
-                for record in self.recorded_data:
-                    timestamp_str = record['timestamp']
-                    joint_name = record['joint_name']
-                    
-                    # 每个电机写一行（对齐格式）
-                    for motor in record['motors']:
-                        line = f"{timestamp_str:<26},{joint_name:<10},{motor['id']:<8},{motor['pos_rad']:<10},{motor['pos_deg']:<12}\n"
-                        f.write(line)
-                    
-                    # 每条记录后插入空行分隔
-                    f.write('\n')
-            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(self.recorded_data, f, ensure_ascii=False, indent=2)
             self.get_logger().info(f"已保存 {len(self.recorded_data)} 条记录到: {filepath}")
             print(f"\n数据已保存到: {filepath}")
-                        
         except Exception as e:
             self.get_logger().error(f"保存数据失败: {str(e)}")
 
@@ -373,5 +341,7 @@ def main(args=None):
         rclpy.shutdown()
 
 
+# Python脚本入口点
+# 该脚本作为独立程序运行时会执行main()函数
 if __name__ == '__main__':
     main()
