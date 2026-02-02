@@ -73,6 +73,8 @@ width / height：图像分辨率
 是否所有深度相机都统一用针孔公式计算XYZ，XYZ的物理意义是对应的点在相机坐标系的3D坐标吗？
 是
 
+ros2 run tf2_ros tf2_echo L_base_link ob_camera_head_color_optical_frame
+
 
 使用 tf 树将 P_cam = (X, Y, Z) 转换成 P_base = (x, y, z) 的详细步骤
 
