@@ -60,8 +60,18 @@ wget https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.pt
 
 
 
-把 YOLO 的结果变成 3D 目标点
-相机内参如何获取？是否所有深度相机都统一用针孔公式计算XYZ，XYZ的物理意义是对应的点在相机坐标系的3D坐标吗？
+把 YOLO 的结果变成 3D 目标点的过程，机内参如何获取？
+
+/ob_camera_head/color/camera_info（sensor_msgs/msg/CameraInfo）包含相机内参，主要在这些字段里：
+K：3×3 内参矩阵（fx, fy, cx, cy）
+P：投影矩阵（常用前四个同样是 fx, fy, cx, cy）
+D：畸变参数
+width / height：图像分辨率
+👉 直接用 K 就可以把 像素坐标 + 深度 转成 相机坐标系下的 3D 点。
+
+
+是否所有深度相机都统一用针孔公式计算XYZ，XYZ的物理意义是对应的点在相机坐标系的3D坐标吗？
+是
 
 
 使用 tf 树将 P_cam = (X, Y, Z) 转换成 P_base = (x, y, z) 的详细步骤
