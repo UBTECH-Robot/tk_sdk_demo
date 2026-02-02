@@ -59,3 +59,11 @@ cd ~/sdk_demo/yolo_models
 wget https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.pt
 
 
+
+把 YOLO 的结果变成 3D 目标点
+相机内参如何获取？是否所有深度相机都统一用针孔公式计算XYZ，XYZ的物理意义是对应的点在相机坐标系的3D坐标吗？
+
+
+使用 tf 树将 P_cam = (X, Y, Z) 转换成 P_base = (x, y, z) 的详细步骤
+
+使用moveit和xarm的区别？
