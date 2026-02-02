@@ -11,9 +11,10 @@ sudo apt install -y \
 
 # YOLO（CPU）
 pip3 install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cpu
-pip3 install -i https://mirrors.cloud.tencent.com/pypi/simple tqdm==4.66.1 numpy==1.21.5 ultralytics==8.2.0  --no-deps
 
-pip3 install -i https://mirrors.cloud.tencent.com/pypi/simple pandas==2.1.3 seaborn==0.13.0 thop py-cpuinfo==9.0.0 torch==2.1.2 torchvision==0.16.2 ultralytics==8.2.0
+pip3 install -i https://mirrors.cloud.tencent.com/pypi/simple tqdm==4.66.1 numpy==1.26.4 pandas==2.1.3 seaborn==0.13.0 thop py-cpuinfo==9.0.0
+
+pip3 install -i https://mirrors.cloud.tencent.com/pypi/simple ultralytics==8.2.0 --no-deps
 
 
 
@@ -54,8 +55,7 @@ ros2 pkg create grab_demo \
 
 
 模型下载
-mkdir -p ~/sdk_demo/yolo_models
-cd ~/sdk_demo/yolo_models
+mkdir -p ~/sdk_demo/yolo_models && cd ~/sdk_demo/yolo_models
 wget https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.pt
 
 

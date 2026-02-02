@@ -12,6 +12,8 @@ from datetime import datetime
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 
 # ros2 run grab_demo yolo_grab_node
+# 使用 ApproximateTimeSynchronizer 对彩色图和深度图进行帧同步处理，只能运行在41.2的orin板上（也就是头部相机所连接的板）。
+# 在41.1的x86板上运行则会出现无法进行同步的问题，彩色图和深度图的传输会大量无效占用带宽，导致 synchronized_image_cb 回调长时间无法被调用。
 
 class YoloGrabNode(Node):
     def __init__(self):
@@ -46,7 +48,7 @@ class YoloGrabNode(Node):
         self.ts = ApproximateTimeSynchronizer(
             [color_sub, depth_sub],
             queue_size=10,
-            slop=0.5  # 允许500ms的时间差
+            slop=0.1  # 允许100ms的时间差
         )
         
         # 注册同步回调函数
