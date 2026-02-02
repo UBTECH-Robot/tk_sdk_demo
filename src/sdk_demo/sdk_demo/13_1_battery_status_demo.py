@@ -4,7 +4,6 @@
 import rclpy
 from rclpy.node import Node
 from bodyctrl_msgs.msg import PowerBatteryStatus  # 自定义消息类型
-from std_msgs.msg import Header
 
 
 class BatteryStatusListener(Node):
@@ -40,25 +39,38 @@ class BatteryStatusListener(Node):
         print(f'⚡ 电池工作状态: {working}')
         print(f'📈 主电池电压: {msg.master_battery_voltage:.2f} V')
         print(f'📉 主电池电流: {msg.master_battery_current:.2f} A')
-        print(f'🔋 主电池电量: {msg.master_battery_power:.2f} %')
+        
+        # 强化显示电量信息
+        print('═' * 50)
+        master_power = msg.master_battery_power
+        print(f'🔋 【主电池电量】 {master_power:.2f} % {"█" * int(master_power / 5)}')
+        little_power = msg.little_battery_power
+        print(f'🔋 【小电池电量】 {little_power:.2f} % {"█" * int(little_power / 5)}')
+        print('═' * 50)
+        print()
+
         print(f'📈 小电池电压: {msg.little_battery_voltage:.2f} V')
         print(f'📉 小电池电流: {msg.little_battery_current:.2f} A')
-        print(f'🔋 小电池电量: {msg.little_battery_power:.2f} %')
 
         def digital_status(value):
-            return '高电平' if value == 1 else '低电平'
+            return '高' if value == 1 else '低'
 
-        # 数字输入状态
-        print(f'🧩 PG12A: {digital_status(msg.pg12a)}')
-        print(f'🧩 PG12B: {digital_status(msg.pg12b)}')
-        print(f'🧩 PG12C: {digital_status(msg.pg12c)}')
-        print(f'🧩 PG12D: {digital_status(msg.pg12d)}')
-        print(f'🧩 PG5CD: {digital_status(msg.pg5cd)}')
-        print(f'🧩 PG5AB: {digital_status(msg.pg5ab)}')
-        print(f'🧩 PGRDC2: {digital_status(msg.pgrdc2)}')
-        print(f'🧩 PGRDC1: {digital_status(msg.pgrdc1)}')
-        print(f'🧩 PGHeader: {digital_status(msg.pgheader)}')
-        print(f'🧩 PGButton2: {digital_status(msg.pgbutton2)}')
+        # 数字输入状态 (简化显示)
+        print('─' * 50)
+        status_str = ' | '.join([
+            f'PG12A:{digital_status(msg.pg12a)}',
+            f'PG12B:{digital_status(msg.pg12b)}',
+            f'PG12C:{digital_status(msg.pg12c)}',
+            f'PG12D:{digital_status(msg.pg12d)}',
+            f'PG5CD:{digital_status(msg.pg5cd)}',
+            f'PG5AB:{digital_status(msg.pg5ab)}',
+            f'PGRDC2:{digital_status(msg.pgrdc2)}',
+            f'PGRDC1:{digital_status(msg.pgrdc1)}',
+            f'PGHeader:{digital_status(msg.pgheader)}',
+            f'PGButton2:{digital_status(msg.pgbutton2)}'
+        ])
+        print(f'Pin状态: {status_str}')
+        print('─' * 50)
 
 
 def main(args=None):
