@@ -125,14 +125,14 @@ class YoloGrabNode(Node):
         self.get_logger().info(f"Binning Y: {msg.binning_y}")
         
         # ROI (Region of Interest) 信息
-        self.get_logger().info(f"ROI: {msg.roi}")
+        # self.get_logger().info(f"ROI: {msg.roi}")
         
-        self.get_logger().info("=" * 60)
-        self.get_logger().info("深度单位确认方法:")
-        self.get_logger().info("1. 查看 Orbbec SDK 文档或ROS驱动说明")
-        self.get_logger().info("2. 查看日志中实际深度值范围 (下面的YOLO回调会输出)")
-        self.get_logger().info("3. 通过对已知距离物体的测量来校准")
-        self.get_logger().info("=" * 60)
+        # self.get_logger().info("=" * 60)
+        # self.get_logger().info("深度单位确认方法:")
+        # self.get_logger().info("1. 查看 Orbbec SDK 文档或ROS驱动说明")
+        # self.get_logger().info("2. 查看日志中实际深度值范围 (下面的YOLO回调会输出)")
+        # self.get_logger().info("3. 通过对已知距离物体的测量来校准")
+        # self.get_logger().info("=" * 60)
 
     def draw_label_with_background(self, img, label, x1, y1, x2, y2, color):
         """绘制标签背景和文字，智能处理边界
@@ -449,13 +449,13 @@ class YoloGrabNode(Node):
 
         # ============ 保存原始图像 ============
         # 1. 保存彩色原始图片
-        self.save_image(color_img, timestamp, suffix="raw_color")
+        # self.save_image(color_img, timestamp, suffix="raw_color")
         
         # 2. 保存深度原始图片（深度图需要进行可视化处理才能正确显示）
         # 深度图的像素值通常在0-5000mm范围内，需要归一化到0-255以便显示
         depth_normalized = cv2.normalize(depth_img, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
         depth_colored = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_TURBO)
-        self.save_image(depth_colored, timestamp, suffix="raw_depth")
+        # self.save_image(depth_colored, timestamp, suffix="raw_depth")
 
         # ============ YOLO物体识别 ============
         # 在彩色图上进行物体检测
