@@ -10,10 +10,11 @@ sudo apt install -y \
   python3-numpy
 
 # YOLO（CPU）
-pip3 install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cpu
+<!-- pip3 install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cpu -->
 
-pip3 install -i https://mirrors.cloud.tencent.com/pypi/simple tqdm==4.66.1 numpy==1.26.4 pandas==2.1.3 seaborn==0.13.0 thop py-cpuinfo==9.0.0
+pip3 install -i https://mirrors.cloud.tencent.com/pypi/simple tqdm==4.66.1 numpy==1.26.4 pandas==2.1.3 seaborn==0.13.0 thop py-cpuinfo==9.0.0 torch==2.1.2 torchvision==0.16.2
 
+<!-- pip3 install torch==2.1.2 torchvision==0.16.2 -i https://mirrors.cloud.tencent.com/pypi/simple -->
 pip3 install -i https://mirrors.cloud.tencent.com/pypi/simple ultralytics==8.2.0 --no-deps
 
 
@@ -73,6 +74,7 @@ width / height：图像分辨率
 是否所有深度相机都统一用针孔公式计算XYZ，XYZ的物理意义是对应的点在相机坐标系的3D坐标吗？
 是
 
+ros2 run tf2_ros tf2_monitor
 ros2 run tf2_ros tf2_echo L_base_link ob_camera_head_color_optical_frame
 
 

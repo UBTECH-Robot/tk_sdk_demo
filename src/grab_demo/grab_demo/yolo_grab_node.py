@@ -8,10 +8,11 @@ import numpy as np
 from ultralytics import YOLO
 import os
 import shutil
+import sys
 from datetime import datetime
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 
-# ros2 run grab_demo yolo_grab_node
+# ros2 run grab_demo yolo_grab_node --target_classes apple
 # 使用 ApproximateTimeSynchronizer 对彩色图和深度图进行帧同步处理，只能运行在41.2的orin板上（也就是头部相机所连接的板）。
 # 在41.1的x86板上运行则会出现无法进行同步的问题，彩色图和深度图的传输会大量无效占用带宽，导致 synchronized_image_cb 回调长时间无法被调用。
 
@@ -29,6 +30,65 @@ class YoloGrabNode(Node):
 
         # 加载 YOLO（CPU）
         self.model = YOLO("yolo_models/yolov8n.pt")
+        
+        # ============ 目标类别配置 ============
+        # 指定要检测的物体类别（大小写不敏感）
+        # 
+        # 使用方法 1 - 直接修改代码中的默认值：
+        #   在 __init__ 方法中修改 target_classes 的值
+        #
+        # 示例用法：
+        #   1. 只检测苹果：--target_classes apple
+        #   2. 检测苹果和橙子：--target_classes apple orange
+        #   3. 检测人和车：--target_classes person car
+        #   4. 检测所有物体：--target_classes all
+        #
+        # 可用的类别列表（YOLO v8n 支持的 COCO 数据集类别，共 80 类）：
+        #   person, bicycle, car, motorbike, aeroplane, bus, train, truck,
+        #   boat, traffic light, fire hydrant, stop sign, parking meter, bench,
+        #   cat, dog, horse, sheep, cow, elephant, bear, zebra, giraffe, backpack,
+        #   umbrella, handbag, tie, suitcase, frisbee, skis, snowboard, sports ball,
+        #   kite, baseball bat, baseball glove, skateboard, surfboard, tennis racket,
+        #   bottle, wine glass, cup, fork, knife, spoon, bowl, banana, apple, sandwich,
+        #   orange, broccoli, carrot, hot dog, pizza, donut, cake, chair, couch,
+        #   potted plant, bed, dining table, toilet, tv, laptop, mouse, remote,
+        #   keyboard, microwave, oven, toaster, sink, refrigerator, book, clock,
+        #   vase, scissors, teddy bear, hair drier, toothbrush
+        #
+        
+        # 从命令行参数解析目标类别
+        target_classes = self._parse_target_classes_from_args()
+        
+        # 获取模型的所有类别名称（字典：类别ID -> 类别名称）
+        self.class_names = self.model.names  # {'0': 'person', '1': 'bicycle', ..., '47': 'apple'}
+        
+        # 构建类别名称到 ID 的映射（小写以支持大小写不敏感的搜索）
+        self.class_id_map = {v.lower(): k for k, v in self.class_names.items()}
+        
+        # 将指定的目标类别名称转换为 YOLO 类别 ID
+        self.target_class_ids = []
+        if target_classes and target_classes != ['all']:  # 只有当 target_classes 非空且不是 'all' 时才过滤
+            for class_name in target_classes:
+                class_name_lower = class_name.lower()
+                if class_name_lower in self.class_id_map:
+                    class_id = self.class_id_map[class_name_lower]
+                    self.target_class_ids.append(class_id)
+                    self.get_logger().info(f"✓ 目标类别 '{class_name}' -> ID {class_id}")
+                else:
+                    self.get_logger().warn(
+                        f"✗ 类别 '{class_name}' 不在模型中。"
+                        f"可用类别: {sorted(set(self.class_names.values()))}"
+                    )
+        
+        # 如果指定了类别但都无效，打印警告
+        if target_classes and target_classes != ['all'] and not self.target_class_ids:
+            self.get_logger().warn("⚠ 未找到有效的目标类别，将检测所有物体")
+        
+        # 如果 target_classes 为空或是 'all'，则不进行类别过滤
+        if self.target_class_ids:
+            self.get_logger().info(f"类别过滤已启用，检测目标: {target_classes}")
+        else:
+            self.get_logger().info("类别过滤已禁用，检测所有物体")
 
         # ============ 消息同步配置 ============
         # 使用 message_filters 进行帧同步
@@ -75,8 +135,65 @@ class YoloGrabNode(Node):
         # 标志位：记录是否已获取过camera_info
         self.camera_info_received = False
         self.depth_unit = None  # 深度单位（如果能从camera_info获取）
+        
+        # ============ 相机内参矩阵（用于像素坐标到3D坐标的反投影） ============
+        # 相机内参矩阵 K 的形式：
+        #   K = [[fx,  0, cx],
+        #        [ 0, fy, cy],
+        #        [ 0,  0,  1]]
+        # 其中：
+        #   fx, fy: 焦距（像素单位）
+        #   cx, cy: 主点坐标（图像中心，像素坐标）
+        # 这些参数在 depth_camera_info_cb 回调中从 camera_info 消息中获取
+        self.camera_matrix_K = None  # 相机内参矩阵（3x3）
+        self.fx = None  # 焦距 x
+        self.fy = None  # 焦距 y
+        self.cx = None  # 主点 x
+        self.cy = None  # 主点 y
 
         self.get_logger().info("YOLO Grab Node started with frame synchronization")
+
+    def _parse_target_classes_from_args(self):
+        """
+        从命令行参数解析目标类别
+        
+        使用方法：
+            python3 -m yolo_grab_node --target_classes apple
+            python3 -m yolo_grab_node --target_classes apple orange
+            python3 -m yolo_grab_node --target_classes person car bicycle
+            python3 -m yolo_grab_node  # 使用默认值 ['apple']
+        
+        Returns:
+            list: 目标类别列表，如 ['apple', 'orange']，或默认值 ['apple']
+        """
+        target_classes = ['apple']  # 默认值：检测苹果
+        
+        # 检查命令行中是否有 --target_classes 参数
+        if '--target_classes' in sys.argv:
+            try:
+                idx = sys.argv.index('--target_classes')
+                # 获取 --target_classes 后面的所有参数（直到下一个以 -- 开头的参数或列表结束）
+                classes = []
+                for i in range(idx + 1, len(sys.argv)):
+                    arg = sys.argv[i]
+                    # 如果遇到以 -- 开头的参数，停止收集
+                    if arg.startswith('--'):
+                        break
+                    classes.append(arg)
+                
+                # 如果有提供类别参数，则使用提供的值
+                if classes:
+                    target_classes = classes
+                    print(f"[INFO] 从命令行解析到目标类别: {target_classes}")
+                else:
+                    print(f"[WARN] --target_classes 后没有指定类别，使用默认值: {target_classes}")
+            except Exception as e:
+                print(f"[ERROR] 解析命令行参数失败: {e}，使用默认值: {target_classes}")
+        else:
+            print(f"[INFO] 未指定 --target_classes 参数，使用默认值: {target_classes}")
+            print(f"[INFO] 使用方法: python3 -m grab_demo.yolo_grab_node --target_classes apple orange")
+        
+        return target_classes
 
     def save_image(self, img, timestamp, suffix="image"):
         """保存图片到指定目录"""
@@ -115,6 +232,24 @@ class YoloGrabNode(Node):
         
         # 打印畸变系数
         self.get_logger().info(f"畸变系数 (Distortion Coefficients): {msg.d}")
+        
+        # ============ 提取并保存相机内参矩阵 ============
+        # 从 camera_info 消息中提取内参矩阵 K
+        # 这些参数用于将像素坐标反投影到相机坐标系下的3D坐标
+        self.camera_matrix_K = np.array(msg.k).reshape(3, 3)
+        self.fx = self.camera_matrix_K[0, 0]  # 焦距 x
+        self.fy = self.camera_matrix_K[1, 1]  # 焦距 y
+        self.cx = self.camera_matrix_K[0, 2]  # 主点 x
+        self.cy = self.camera_matrix_K[1, 2]  # 主点 y
+        
+        self.get_logger().info("\n" + "="*60)
+        self.get_logger().info("相机内参矩阵参数已保存：")
+        self.get_logger().info(f"  焦距 fx: {self.fx:.2f} px")
+        self.get_logger().info(f"  焦距 fy: {self.fy:.2f} px")
+        self.get_logger().info(f"  主点 cx: {self.cx:.2f} px")
+        self.get_logger().info(f"  主点 cy: {self.cy:.2f} px")
+        self.get_logger().info("这些参数用于像素坐标到3D相机坐标系的反投影转换")
+        self.get_logger().info("="*60 + "\n")
         
         # 检查是否有特殊标记表示深度单位
         # Orbbec SDK 某些版本在 camera_info 的其他字段中标记深度单位
@@ -316,6 +451,113 @@ class YoloGrabNode(Node):
         
         return cx, cy, cz_raw, cz_meters
 
+    def pixel_to_3d_camera_coords(self, pixel_x, pixel_y, depth_z):
+        """将图像平面上的像素坐标和深度值转换为相机坐标系下的3D坐标
+        
+        这是一个关键方法，用于从2D图像空间转换到3D相机坐标空间。
+        
+        原理：
+        ------
+        图像上的像素点 (pixel_x, pixel_y) 与相机坐标系下的3D点 (X, Y, Z) 的关系为：
+        
+        相机坐标系定义：
+            - 原点：在相机镜头的光学中心
+            - X轴：向右
+            - Y轴：向下
+            - Z轴：向前（沿着相机光轴方向）
+        
+        反投影公式（从像素坐标到相机3D坐标）：
+            X = (pixel_x - cx) * Z / fx
+            Y = (pixel_y - cy) * Z / fy
+            Z = depth_z
+        
+        其中相机内参为：
+            - fx, fy: 焦距（像素单位），从相机标定得到
+            - cx, cy: 主点（图像中心坐标，像素），从相机标定得到
+            - depth_z: 深度值（从深度相机获取，单位：米）
+        
+        这个转换允许我们：
+        1. 从2D检测结果（图像坐标 + 深度值）得到3D点云信息
+        2. 在机器人坐标系中使用这些3D点进行操作（如抓取规划）
+        3. 进行3D空间中的几何计算
+        
+        Args:
+            pixel_x (float): 图像中的像素x坐标（从左到右，0~图像宽度）
+            pixel_y (float): 图像中的像素y坐标（从上到下，0~图像高度）
+            depth_z (float): 深度值（单位：米，从深度相机获取）
+        
+        Returns:
+            dict: 包含3D坐标的字典，键值为：
+                - 'X': 相机坐标系下的X坐标（米），正方向向右
+                - 'Y': 相机坐标系下的Y坐标（米），正方向向下
+                - 'Z': 相机坐标系下的Z坐标（米），正方向向前（沿光轴）
+                - 'pixel_x': 原始输入的像素x坐标
+                - 'pixel_y': 原始输入的像素y坐标
+                - 'depth_z': 原始输入的深度值
+        
+        Raises:
+            RuntimeError: 如果相机内参未被初始化（camera_info尚未接收）
+            ValueError: 如果输入参数无效
+        
+        Examples:
+            >>> # 将检测到的物体中心点转换为3D坐标
+            >>> coords_3d = self.pixel_to_3d_camera_coords(320, 240, 1.5)
+            >>> print(f"3D坐标: X={coords_3d['X']:.3f}m, Y={coords_3d['Y']:.3f}m, Z={coords_3d['Z']:.3f}m")
+        
+        Notes:
+            - 此方法假设已收到 camera_info 消息并成功提取了内参
+            - 深度值应该是从对齐后的深度相机获取
+            - 相机坐标系与相机的RGB帧对齐
+            - 如果内参未初始化，会抛出异常
+        """
+        # 参数验证
+        if depth_z is None or depth_z <= 0:
+            raise ValueError(f"深度值无效：{depth_z}。深度值必须大于0（单位：米）")
+        
+        if pixel_x is None or pixel_y is None:
+            raise ValueError(f"像素坐标无效：({pixel_x}, {pixel_y})")
+        
+        # 检查相机内参是否已初始化
+        if self.fx is None or self.fy is None or self.cx is None or self.cy is None:
+            raise RuntimeError(
+                "相机内参未初始化！请确保已接收到 camera_info 消息。"
+                "检查 /ob_camera_head/depth/camera_info 话题是否正常发布。"
+            )
+        
+        # ============ 反投影计算 ============
+        # 基于针孔相机模型的反投影公式
+        # 从像素坐标 (pixel_x, pixel_y) 和深度 depth_z 计算相机坐标系下的3D点 (X, Y, Z)
+        
+        # 计算X坐标（相机坐标系中向右为正）
+        # X = (pixel_x - cx) * Z / fx
+        X = (pixel_x - self.cx) * depth_z / self.fx
+        
+        # 计算Y坐标（相机坐标系中向下为正）
+        # Y = (pixel_y - cy) * Z / fy
+        Y = (pixel_y - self.cy) * depth_z / self.fy
+        
+        # Z坐标就是深度值本身（相机坐标系中沿光轴方向）
+        Z = depth_z
+        
+        # 返回结果字典，包含3D坐标和输入参数（便于追踪）
+        result = {
+            'X': X,  # 米
+            'Y': Y,  # 米
+            'Z': Z,  # 米
+            'pixel_x': pixel_x,  # 原始像素坐标
+            'pixel_y': pixel_y,  # 原始像素坐标
+            'depth_z': depth_z,  # 原始深度值
+            'camera_params': {
+                'fx': self.fx,
+                'fy': self.fy,
+                'cx': self.cx,
+                'cy': self.cy
+            }
+        }
+        
+        return result
+    
+
     def draw_depth_info_on_depth_image(self, img, center_x, center_y, depth_meters):
         """在深度图上绘制中心点标记和深度值
         
@@ -470,6 +712,33 @@ class YoloGrabNode(Node):
             self.get_logger().info("No objects detected")
             return
 
+        # ============ 目标类别过滤 ============
+        # 如果指定了 target_class_ids，则只保留该类别的检测框
+        # 
+        # 说明：
+        #   - 只修改 results[0].boxes，不需要修改 results[0].names
+        #   - results[0].names 是模型的类别映射（{0: 'person', 1: 'bicycle', ...}），是静态的
+        #   - 每个 box 的 box.cls 保存类别 ID，通过 results[0].names[class_id] 可以获取类别名称
+        #   - 所以过滤 boxes 后，names 仍然能正确地为剩余的 boxes 查询类别名称
+        #
+        if self.target_class_ids:
+            filtered_boxes = []
+            for box in results[0].boxes:
+                cls = int(box.cls[0].cpu().numpy())
+                # 只保留类别 ID 在目标列表中的检测框
+                if cls in self.target_class_ids:
+                    filtered_boxes.append(box)
+            
+            # 如果没有找到目标类别的检测框，则记录日志并返回
+            if not filtered_boxes:
+                target_class_names = ', '.join([self.class_names[cid] for cid in self.target_class_ids])
+                self.get_logger().info(f"未检测到目标物体: {target_class_names}（检测到其他物体）")
+                return
+            
+            # 使用过滤后的检测框更新结果
+            # 这样后续的绘制和处理代码只会处理目标类别的物体
+            results[0].boxes = filtered_boxes
+        
         # ============ 创建标注图像 ============
         # 创建彩色图的副本用于绘制标注
         annotated_img = color_img.copy()
@@ -526,28 +795,55 @@ class YoloGrabNode(Node):
         self.save_image(annotated_img, timestamp, suffix="detected_color")
         
         # 保存带标注的深度图
-        self.save_image(depth_annotated, timestamp, suffix="detected_depth")
+        # self.save_image(depth_annotated, timestamp, suffix="detected_depth")
 
         # ============ 发布抓取点（使用第一个检测框） ============
         # 取第一个检测框计算抓取点
         box = results[0].boxes[0]
         
-        # 计算抓取点的中心坐标和深度值
+        # 计算抓取点的中心坐标和深度值（像素空间）
         cx, cy, cz_raw, cz = self.calculate_center_point_with_depth(box, depth_img)
 
-        # 发布 Pose（包含3D坐标：像素坐标x,y和深度z）
-        pose = Pose()
-        pose.position.x = cx
-        pose.position.y = cy
-        pose.position.z = cz  # 深度值（单位：米，假设原始数据单位为毫米）
-
-        pose.orientation.w = 1.0
-
-        self.pub.publish(pose)
-
-        self.get_logger().info(
-            f"Primary grasp point: ({cx:.1f}, {cy:.1f}, {cz:.3f}m) [raw_depth={cz_raw}] | Detected {len(results[0].boxes)} objects"
-        )
+        # ============ 转换到相机坐标系下的3D坐标 ============
+        # 将像素坐标 (cx, cy) 和深度值 cz 转换为真实的相机坐标系下的3D坐标
+        # 这一步是关键：从2D图像空间 + 深度值 → 3D相机坐标空间
+        try:
+            coords_3d = self.pixel_to_3d_camera_coords(cx, cy, cz)
+            X_3d = coords_3d['X']  # 相机坐标系 X（向右）
+            Y_3d = coords_3d['Y']  # 相机坐标系 Y（向下）
+            Z_3d = coords_3d['Z']  # 相机坐标系 Z（沿光轴向前）
+            
+            # 发布 Pose（包含真实的3D相机坐标）
+            pose = Pose()
+            pose.position.x = X_3d     # 单位：米，相机坐标系中向右为正
+            pose.position.y = Y_3d     # 单位：米，相机坐标系中向下为正
+            pose.position.z = Z_3d     # 单位：米，相机坐标系中沿光轴向前为正
+            
+            pose.orientation.w = 1.0  # 无旋转（单位四元数）
+            
+            self.pub.publish(pose)
+            
+            self.get_logger().info(
+                f"✓ Grasp point (3D Camera Coords): X={X_3d:.3f}m, Y={Y_3d:.3f}m, Z={Z_3d:.3f}m "
+                f"| Image pixel: ({cx:.1f}, {cy:.1f}) | Detected {len(results[0].boxes)} objects"
+            )
+        except RuntimeError as e:
+            # 如果相机内参未初始化，降级到使用像素坐标
+            self.get_logger().warn(
+                f"无法进行3D坐标转换：{str(e)}。使用像素坐标作为替代。"
+            )
+            pose = Pose()
+            pose.position.x = cx       # 像素 x（0~图像宽度）
+            pose.position.y = cy       # 像素 y（0~图像高度）
+            pose.position.z = cz       # 深度（单位：米）
+            pose.orientation.w = 1.0
+            
+            self.pub.publish(pose)
+            
+            self.get_logger().info(
+                f"Primary grasp point (Pixel coords): ({cx:.1f}, {cy:.1f}, {cz:.3f}m) "
+                f"[raw_depth={cz_raw}] | Detected {len(results[0].boxes)} objects"
+            )
 
 
 def main():
