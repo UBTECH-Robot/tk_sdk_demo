@@ -7,6 +7,13 @@
     python3 test_pose_publisher.py --x 1.0 --y 2.0 --z 3.0 --frame_id L_base_link
     python3 test_pose_publisher.py -x 1.0 -y 2.0 -z 3.0 -f pelvis
     python3 test_pose_publisher.py -x 0.5 -y 1.0 -z 1.5 -f pelvis
+    python3 test_pose_publisher.py -x 0.5 -y 1.0 -z 1.5 -f ob_camera_head_link
+    python3 test_pose_publisher.py -x 0.5 -y 1.0 -z 1.5 -f camera_head_link
+    python3 test_pose_publisher.py -x 0.5 -y 1.0 -z 1.5 -f head_roll_link
+    
+    python3 test_pose_publisher.py -x -0.013 -y 0.173 -z 0.694 -f ob_camera_head_link
+    python3 test_pose_publisher.py -x -0.052 -y -0.683 -z 0.723 -f pelvis
+    python3 test_pose_publisher.py -x -0.013 -y 0.173 -z 0.694 -f ob_camera_head_color_optical_frame
 
 按下 Ctrl+C 停止发布
 """

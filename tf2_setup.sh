@@ -21,6 +21,12 @@ ros2 run tf2_ros static_transform_publisher 0.0 0.0 0.0 0 0 0 1 camera_head_link
 
 # 5. 在终端查看所有活跃的TF坐标系
 # ros2 run tf2_ros tf2_monitor
+# 示例输出（根据实际情况可能有所不同）：
+# Frame: ob_camera_head_color_frame, published by <no authority available>, Average Delay: 3249.28, Max Delay: 3249.28
+# Frame: ob_camera_head_color_optical_frame, published by <no authority available>, Average Delay: 3249.28, Max Delay: 3249.28
+# Frame: ob_camera_head_depth_frame, published by <no authority available>, Average Delay: 3249.28, Max Delay: 3249.28
+# Frame: ob_camera_head_depth_optical_frame, published by <no authority available>, Average Delay: 3249.28, Max Delay: 3249.28
+# Frame: ob_camera_head_link, published by <no authority available>, Average Delay: 2953.01, Max Delay: 2953.01
 
 # 6. 在RViz中可视化
 ```bash

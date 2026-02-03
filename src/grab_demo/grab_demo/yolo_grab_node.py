@@ -190,7 +190,7 @@ class YoloGrabNode(Node):
         
         # 相机光学坐标系（OpenCV和深度相机的标准坐标系）
         # 通常是 ob_camera_head_depth_optical_frame 或 ob_camera_head_color_optical_frame
-        self.camera_optical_frame = "ob_camera_head_depth_optical_frame"
+        self.camera_optical_frame = "ob_camera_head_color_optical_frame"
         
         # 目标基座坐标系（机器人抓取基准）
         # 对于人形机器人，通常是 L_base_link（左腿基座）或 R_base_link（右腿基座）
@@ -1123,13 +1123,11 @@ class YoloGrabNode(Node):
             self.draw_depth_label_on_color_image(annotated_img, center_x_int, center_y_int, depth_meters)
             
             # 输出日志
-            self.get_logger().info(
-                f"Object {i+1}: {label} | Center: ({center_x_int}, {center_y_int}) | Depth raw={depth_value} | Depth={depth_meters:.3f}m"
-            )
+            self.get_logger().info(f"{label} | 中心点: ({center_x_int}, {center_y_int}) | Depth raw={depth_value} | Depth={depth_meters:.3f}m")
 
         # ============ 保存标注后的图像 ============
         # 保存带标注的彩色图
-        # self.save_image(annotated_img, timestamp, suffix="detected_color")
+        self.save_image(annotated_img, timestamp, suffix="detected_color")
         
         # 保存带标注的深度图
         # self.save_image(depth_annotated, timestamp, suffix="detected_depth")
