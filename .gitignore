@@ -6,3 +6,5 @@ bag_data
 *_imgs
 saved_data/
 *.pt
+*.gv
+*.pdf

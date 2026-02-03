@@ -1,7 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image, CameraInfo
-from geometry_msgs.msg import Pose
+from geometry_msgs.msg import Pose, PoseStamped, PointStamped
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
@@ -11,6 +11,8 @@ import shutil
 import sys
 from datetime import datetime
 from message_filters import ApproximateTimeSynchronizer, Subscriber
+import tf2_ros
+from tf2_geometry_msgs import PointStamped as TF2PointStamped
 
 # ros2 run grab_demo yolo_grab_node --target_classes apple
 # 使用 ApproximateTimeSynchronizer 对彩色图和深度图进行帧同步处理，只能运行在41.2的orin板上（也就是头部相机所连接的板）。
@@ -28,8 +30,38 @@ class YoloGrabNode(Node):
             shutil.rmtree(self.save_dir)
         os.makedirs(self.save_dir)
 
-        # 加载 YOLO（CPU）
+        # ============ 加载 YOLO 模型 ============
+        # 选择推理设备：GPU 或 CPU
+        # 对于 Jetson Orin，强烈推荐使用 GPU（device=0），性能提升 4-6 倍
+        # 
+        # 设备选项：
+        #   - device=0 或 device="cuda": 使用第一块GPU（Jetson Orin内置GPU）
+        #   - device="cpu": 使用CPU（较慢）
+        #   - device="cuda:0": 显式指定第一块GPU
+        #
+        # 性能对比（YOLOv8n，Jetson Orin）：
+        #   CPU: 150-300ms/frame (3-7 FPS)
+        #   GPU: 25-50ms/frame (20-40 FPS)
+        #   加速比: 4-6倍
+        self.device = "cuda"  # 改为 "cpu" 可切换到CPU推理
         self.model = YOLO("yolo_models/yolov8n.pt")
+        
+        # ============ GPU 预热 ============
+        # 第一次GPU推理会有初始化开销（~500ms）
+        # 预热可以避免第一帧检测时的长延迟
+        if self.device == "cuda":
+            try:
+                import numpy as np
+                dummy_input = np.zeros((480, 640, 3), dtype=np.uint8)
+                self.model.predict(
+                    source=dummy_input,
+                    device=self.device,
+                    conf=0.5,
+                    verbose=False
+                )
+                self.get_logger().info("✓ GPU 预热完成")
+            except Exception as e:
+                self.get_logger().warn(f"GPU预热失败: {str(e)}，但不影响后续推理")
         
         # ============ 目标类别配置 ============
         # 指定要检测的物体类别（大小写不敏感）
@@ -115,7 +147,7 @@ class YoloGrabNode(Node):
         self.ts.registerCallback(self.synchronized_image_cb)
 
         # 发布抓取点
-        self.pub = self.create_publisher(Pose, "/grasp_pose", 10)
+        self.pub = self.create_publisher(PoseStamped, "/grasp_pose", 10)
         
         # 存储最新的深度数据（用于在回调中访问）
         self.latest_depth_img = None
@@ -150,8 +182,23 @@ class YoloGrabNode(Node):
         self.fy = None  # 焦距 y
         self.cx = None  # 主点 x
         self.cy = None  # 主点 y
+        
+        # ============ TF2 坐标系变换配置 ============
+        # 用于将相机坐标系下的3D点变换到机器人基座坐标系
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        
+        # 相机光学坐标系（OpenCV和深度相机的标准坐标系）
+        # 通常是 ob_camera_head_depth_optical_frame 或 ob_camera_head_color_optical_frame
+        self.camera_optical_frame = "ob_camera_head_depth_optical_frame"
+        
+        # 目标基座坐标系（机器人抓取基准）
+        # 对于人形机器人，通常是 L_base_link（左腿基座）或 R_base_link（右腿基座）
+        # 用户可通过命令行参数 --target_frame 指定
+        self.target_frame = self._parse_target_frame_from_args()
 
-        self.get_logger().info("YOLO Grab Node started with frame synchronization")
+        self.get_logger().info(f"相机光学坐标系: {self.camera_optical_frame}")
+        self.get_logger().info(f"目标基座坐标系: {self.target_frame}")
 
     def _parse_target_classes_from_args(self):
         """
@@ -195,12 +242,90 @@ class YoloGrabNode(Node):
         
         return target_classes
 
+    def _parse_target_frame_from_args(self):
+        """
+        从命令行参数解析目标坐标系
+        
+        用于指定抓取操作的基准坐标系。对于人形机器人，通常是：
+        - L_base_link: 左腿基座（左臂抓取）
+        - R_base_link: 右腿基座（右臂抓取）
+        - waist_yaw_link: 腰部中心（躯干参考）
+        
+        使用方法：
+            ros2 run grab_demo yolo_grab_node --target_frame L_base_link
+            ros2 run grab_demo yolo_grab_node --target_frame R_base_link
+        
+        Returns:
+            str: 目标基座坐标系名称，默认为 "L_base_link"
+        """
+        target_frame = "pelvis" # "L_base_link"  # 默认值：
+        
+        if '--target_frame' in sys.argv:
+            try:
+                idx = sys.argv.index('--target_frame')
+                if idx + 1 < len(sys.argv):
+                    frame = sys.argv[idx + 1]
+                    if not frame.startswith('--'):
+                        target_frame = frame
+                        print(f"[INFO] 从命令行解析到目标坐标系: {target_frame}")
+            except Exception as e:
+                print(f"[ERROR] 解析目标坐标系参数失败: {e}，使用默认值: {target_frame}")
+        else:
+            print(f"[INFO] 未指定 --target_frame 参数，使用默认值: {target_frame}")
+            print(f"[INFO] 使用方法: ros2 run grab_demo yolo_grab_node --target_frame L_base_link")
+        
+        return target_frame
+
+    def _cleanup_old_files(self, max_files=20):
+        """清理目录内的旧文件，保持文件数不超过指定数量
+        
+        当目录内文件数超过 max_files 时，删除最旧的文件
+        
+        Args:
+            max_files (int): 目录内最多保留的文件数，默认20个
+        """
+        try:
+            # 获取目录内所有文件
+            files = [f for f in os.listdir(self.save_dir) 
+                     if os.path.isfile(os.path.join(self.save_dir, f))]
+            
+            # 如果文件数超过限制，删除最老的文件
+            if len(files) > max_files:
+                # 按修改时间排序，最旧的在前面
+                files_with_time = [(f, os.path.getmtime(os.path.join(self.save_dir, f))) 
+                                   for f in files]
+                files_with_time.sort(key=lambda x: x[1])  # 按时间升序排列
+                
+                # 需要删除的文件数
+                num_to_delete = len(files) - max_files
+                
+                for i in range(num_to_delete):
+                    old_file = files_with_time[i][0]
+                    old_filepath = os.path.join(self.save_dir, old_file)
+                    try:
+                        os.remove(old_filepath)
+                        self.get_logger().debug(f"Deleted old file: {old_file}")
+                    except Exception as e:
+                        self.get_logger().warn(f"Failed to delete {old_file}: {str(e)}")
+                
+                self.get_logger().info(
+                    f"Cleaned up {num_to_delete} old file(s), keeping latest {max_files} files"
+                )
+        except Exception as e:
+            self.get_logger().warn(f"Error during cleanup: {str(e)}")
+
     def save_image(self, img, timestamp, suffix="image"):
-        """保存图片到指定目录"""
+        """保存图片到指定目录
+        
+        在保存前检查目录文件数量，超过20个则删除最旧的文件
+        """
+        # 清理旧文件（保持不超过20个）
+        self._cleanup_old_files(max_files=20)
+        
         filename = f"{timestamp}_{suffix}.jpg"
         filepath = os.path.join(self.save_dir, filename)
         cv2.imwrite(filepath, img)
-        self.get_logger().info(f"Saved: {filename}")
+        # self.get_logger().info(f"Saved: {filename}")
         return filepath
 
     def depth_camera_info_cb(self, msg):
@@ -231,7 +356,7 @@ class YoloGrabNode(Node):
         self.get_logger().info(f"\n{K}")
         
         # 打印畸变系数
-        self.get_logger().info(f"畸变系数 (Distortion Coefficients): {msg.d}")
+        # self.get_logger().info(f"畸变系数 (Distortion Coefficients): {msg.d}")
         
         # ============ 提取并保存相机内参矩阵 ============
         # 从 camera_info 消息中提取内参矩阵 K
@@ -244,10 +369,10 @@ class YoloGrabNode(Node):
         
         self.get_logger().info("\n" + "="*60)
         self.get_logger().info("相机内参矩阵参数已保存：")
-        self.get_logger().info(f"  焦距 fx: {self.fx:.2f} px")
-        self.get_logger().info(f"  焦距 fy: {self.fy:.2f} px")
-        self.get_logger().info(f"  主点 cx: {self.cx:.2f} px")
-        self.get_logger().info(f"  主点 cy: {self.cy:.2f} px")
+        self.get_logger().info(f"  焦距 fx: {self.fx:.2f}")
+        self.get_logger().info(f"  焦距 fy: {self.fy:.2f}")
+        self.get_logger().info(f"  主点 cx: {self.cx:.2f}")
+        self.get_logger().info(f"  主点 cy: {self.cy:.2f}")
         self.get_logger().info("这些参数用于像素坐标到3D相机坐标系的反投影转换")
         self.get_logger().info("="*60 + "\n")
         
@@ -488,16 +613,19 @@ class YoloGrabNode(Node):
         
         Returns:
             dict: 包含3D坐标的字典，键值为：
-                - 'X': 相机坐标系下的X坐标（米），正方向向右
-                - 'Y': 相机坐标系下的Y坐标（米），正方向向下
-                - 'Z': 相机坐标系下的Z坐标（米），正方向向前（沿光轴）
+                - 'X': 相机坐标系下的X坐标（米），正方向向右（如果valid=True）
+                - 'Y': 相机坐标系下的Y坐标（米），正方向向下（如果valid=True）
+                - 'Z': 相机坐标系下的Z坐标（米），正方向向前（如果valid=True）
+                - 'valid': 布尔值，表示数据是否有效（True=成功，False=失败）
+                - 'error': 如果valid=False，包含错误信息；否则为None
                 - 'pixel_x': 原始输入的像素x坐标
                 - 'pixel_y': 原始输入的像素y坐标
                 - 'depth_z': 原始输入的深度值
         
-        Raises:
-            RuntimeError: 如果相机内参未被初始化（camera_info尚未接收）
-            ValueError: 如果输入参数无效
+        Notes:
+            - 深度值无效（≤0）时不抛异常，返回valid=False
+            - 相机内参未初始化时不抛异常，返回valid=False
+            - 调用方应检查返回值的'valid'字段，如果为False则忽略本次数据
         
         Examples:
             >>> # 将检测到的物体中心点转换为3D坐标
@@ -510,19 +638,31 @@ class YoloGrabNode(Node):
             - 相机坐标系与相机的RGB帧对齐
             - 如果内参未初始化，会抛出异常
         """
-        # 参数验证
+        # 参数验证 - 返回标记而不是抛异常，让调用者决定是否继续
         if depth_z is None or depth_z <= 0:
-            raise ValueError(f"深度值无效：{depth_z}。深度值必须大于0（单位：米）")
+            return {
+                'X': None, 'Y': None, 'Z': None,
+                'valid': False,
+                'error': f"深度值无效：{depth_z}。深度值必须大于0（单位：米）",
+                'pixel_x': pixel_x, 'pixel_y': pixel_y, 'depth_z': depth_z
+            }
         
         if pixel_x is None or pixel_y is None:
-            raise ValueError(f"像素坐标无效：({pixel_x}, {pixel_y})")
+            return {
+                'X': None, 'Y': None, 'Z': None,
+                'valid': False,
+                'error': f"像素坐标无效：({pixel_x}, {pixel_y})",
+                'pixel_x': pixel_x, 'pixel_y': pixel_y, 'depth_z': depth_z
+            }
         
         # 检查相机内参是否已初始化
         if self.fx is None or self.fy is None or self.cx is None or self.cy is None:
-            raise RuntimeError(
-                "相机内参未初始化！请确保已接收到 camera_info 消息。"
-                "检查 /ob_camera_head/depth/camera_info 话题是否正常发布。"
-            )
+            return {
+                'X': None, 'Y': None, 'Z': None,
+                'valid': False,
+                'error': "相机内参未初始化！请确保已接收到 camera_info 消息。检查 /ob_camera_head/depth/camera_info 话题是否正常发布。",
+                'pixel_x': pixel_x, 'pixel_y': pixel_y, 'depth_z': depth_z
+            }
         
         # ============ 反投影计算 ============
         # 基于针孔相机模型的反投影公式
@@ -544,6 +684,8 @@ class YoloGrabNode(Node):
             'X': X,  # 米
             'Y': Y,  # 米
             'Z': Z,  # 米
+            'valid': True,  # 标记数据有效
+            'error': None,
             'pixel_x': pixel_x,  # 原始像素坐标
             'pixel_y': pixel_y,  # 原始像素坐标
             'depth_z': depth_z,  # 原始深度值
@@ -558,6 +700,190 @@ class YoloGrabNode(Node):
         return result
     
 
+    def transform_point_to_target_frame(self, point_camera, target_frame=None):
+        """将相机坐标系下的3D点变换到目标坐标系
+        
+        这是一个关键方法，用于将相机光学坐标系下的3D坐标变换到机器人基座坐标系
+        以便进行抓取规划和执行。
+        
+        坐标系变换流程：
+        ----------------
+        1. 输入：相机光学坐标系下的3D点 (X_cam, Y_cam, Z_cam)
+           - X轴向右，Y轴向下，Z轴向前（OpenCV标准）
+           - 原点在相机镜头的光学中心
+        
+        2. TF2变换：通过查询TF树获得相机坐标系到目标坐标系的变换矩阵
+           - 从 ob_camera_head_depth_optical_frame 到 L_base_link（或指定的目标坐标系）
+           - 该变换包含相对位置和相对旋转
+        
+        3. 输出：目标坐标系下的3D点 (X_target, Y_target, Z_target)
+           - 通常是 L_base_link 或 R_base_link
+           - 这是机器人抓取基准坐标系
+        
+        重要概念：
+        ---------
+        - 相机光学坐标系 (ob_camera_head_depth_optical_frame)
+          * OpenCV和ROS深度相机的标准坐标系
+          * X向右，Y向下，Z向前（沿光轴）
+          * pixel_to_3d_camera_coords() 输出就是这个坐标系
+        
+        - 目标基座坐标系 (L_base_link 或 R_base_link)
+          * 机器人腿部基座坐标系（ROS标准右手系）
+          * 是抓取操作的运动基准
+          * 抓取规划器需要在这个坐标系下工作
+        
+        Args:
+            point_camera (dict): 相机坐标系下的3D点
+                包含键值：'X', 'Y', 'Z'（单位：米）
+                通常来自 pixel_to_3d_camera_coords() 的返回值
+            
+            target_frame (str): 目标坐标系名称
+                如果为None，则使用初始化时指定的 self.target_frame
+                常见值: "L_base_link", "R_base_link", "waist_yaw_link"
+        
+        Returns:
+            dict: 目标坐标系下的3D点，包含：
+                - 'X', 'Y', 'Z': 目标坐标系下的坐标（米）
+                - 'frame_id': 目标坐标系名称
+                - 'camera_frame': 相机坐标系名称
+                - 'success': 变换是否成功
+                - 'error': 如果失败，包含错误信息
+        
+        Raises:
+            ValueError: 如果输入点无效
+            RuntimeError: 如果TF2变换查询失败
+        
+        Examples:
+            >>> # 将相机坐标系的点变换到左腿基座
+            >>> coords_camera = self.pixel_to_3d_camera_coords(320, 240, 1.5)
+            >>> coords_base = self.transform_point_to_target_frame(coords_camera)
+            >>> print(f"基座坐标系: X={coords_base['X']:.3f}m")
+        
+        Notes:
+            - TF2需要维护完整的坐标系树，确保从相机坐标系到目标坐标系有变换路径
+            - 如果变换不可用，会返回错误信息而不是抛出异常（便于调试）
+            - 确保ROS2系统正确发布了 /tf 和 /tf_static 话题
+        """
+        # 参数验证
+        if not isinstance(point_camera, dict) or 'X' not in point_camera or 'Y' not in point_camera or 'Z' not in point_camera:
+            raise ValueError(f"输入点格式无效，必须包含 'X', 'Y', 'Z' 键")
+        
+        if target_frame is None:
+            target_frame = self.target_frame
+        
+        try:
+            # ============ 步骤1：创建相机坐标系下的点消息 ============
+            # 将3D点转换为ROS PointStamped 消息格式
+            # 这个消息包含坐标值和坐标系信息，是TF2变换的输入格式
+            point_stamped = PointStamped()
+            point_stamped.header.frame_id = self.camera_optical_frame
+            point_stamped.header.stamp = self.get_clock().now().to_msg()
+            point_stamped.point.x = float(point_camera['X'])
+            point_stamped.point.y = float(point_camera['Y'])
+            point_stamped.point.z = float(point_camera['Z'])
+            
+            # ============ 步骤2：查询TF变换 ============
+            # 从TF缓冲区查询从相机坐标系到目标坐标系的变换
+            # 使用较长的超时时间（1秒）以应对启动时的TF缓冲区延迟
+            # 节点刚启动时，TF树需要时间来发布和缓冲变换数据
+            # 通常几秒后就会正常，但新连接可能需要等待
+            try:
+                # 尝试查询最新的变换（超时1秒）
+                transform = self.tf_buffer.lookup_transform(
+                    target_frame,
+                    self.camera_optical_frame,
+                    rclpy.time.Time(),  # 查询最新的变换
+                    timeout=rclpy.duration.Duration(seconds=5.0)  # 等待最多5秒
+                )
+            except (tf2_ros.LookupException, tf2_ros.ConnectivityException):
+                # 如果最新时间戳失败，尝试查询最近可用的（通常在缓冲区内）
+                # 这对于刚启动的节点很有效
+                transform = self.tf_buffer.lookup_transform(
+                    target_frame,
+                    self.camera_optical_frame,
+                    rclpy.time.Time(seconds=0),  # 查询最近可用的任何时间戳
+                    timeout=rclpy.duration.Duration(seconds=3.0)
+                )
+            
+            # ============ 步骤3：执行坐标系变换 ============
+            # 使用TF2库进行齐次变换
+            # do_transform_point() 接收点和变换，返回变换后的点
+            from tf2_geometry_msgs import do_transform_point
+            point_transformed = do_transform_point(point_stamped, transform)
+            
+            # ============ 步骤4：提取变换后的坐标 ============
+            result = {
+                'X': float(point_transformed.point.x),
+                'Y': float(point_transformed.point.y),
+                'Z': float(point_transformed.point.z),
+                'frame_id': target_frame,
+                'camera_frame': self.camera_optical_frame,
+                'success': True,
+                'error': None,
+                'original_camera_coords': {
+                    'X': point_camera['X'],
+                    'Y': point_camera['Y'],
+                    'Z': point_camera['Z']
+                }
+            }
+            
+            return result
+        
+        except tf2_ros.LookupException as e:
+            # 变换不存在（坐标系树中没有连接路径）
+            self.get_logger().error(
+                f"TF查询失败：无法找到从 {self.camera_optical_frame} 到 {target_frame} 的变换。"
+                f"原因: {str(e)}"
+            )
+            return {
+                'success': False,
+                'error': f"LookupException: {str(e)}",
+                'frame_id': target_frame,
+                'camera_frame': self.camera_optical_frame,
+                'X': None, 'Y': None, 'Z': None
+            }
+        
+        except tf2_ros.ConnectivityException as e:
+            # TF树连接问题
+            self.get_logger().error(
+                f"TF连接错误：无法连接到TF服务。"
+                f"原因: {str(e)}"
+            )
+            return {
+                'success': False,
+                'error': f"ConnectivityException: {str(e)}",
+                'frame_id': target_frame,
+                'camera_frame': self.camera_optical_frame,
+                'X': None, 'Y': None, 'Z': None
+            }
+        
+        except tf2_ros.ExtrapolationException as e:
+            # 时间戳超出有效范围
+            self.get_logger().error(
+                f"TF时间戳错误：请求的时间戳超出有效范围。"
+                f"原因: {str(e)}"
+            )
+            return {
+                'success': False,
+                'error': f"ExtrapolationException: {str(e)}",
+                'frame_id': target_frame,
+                'camera_frame': self.camera_optical_frame,
+                'X': None, 'Y': None, 'Z': None
+            }
+        
+        except Exception as e:
+            # 其他未预期的错误
+            self.get_logger().error(
+                f"坐标系变换发生未预期的错误: {str(e)}"
+            )
+            return {
+                'success': False,
+                'error': f"UnexpectedException: {str(e)}",
+                'frame_id': target_frame,
+                'camera_frame': self.camera_optical_frame,
+                'X': None, 'Y': None, 'Z': None
+            }
+    
     def draw_depth_info_on_depth_image(self, img, center_x, center_y, depth_meters):
         """在深度图上绘制中心点标记和深度值
         
@@ -668,14 +994,11 @@ class YoloGrabNode(Node):
         """同步处理彩色图和深度图的回调函数
         
         该回调函数确保处理的彩色图和深度图来自同一时刻的传感器数据
-        这正是帧同步的核心作用
         
         Args:
             color_msg: 彩色图像消息 (sensor_msgs/msg/Image)
             depth_msg: 深度图像消息 (sensor_msgs/msg/Image)
         """
-        self.get_logger().info("synchronized_image detected")
-
         # ============ 消息转换 ============
         # 将ROS消息转换为OpenCV格式
         # 彩色图：BGR格式（OpenCV标准格式）
@@ -701,9 +1024,12 @@ class YoloGrabNode(Node):
 
         # ============ YOLO物体识别 ============
         # 在彩色图上进行物体检测
+        # device 参数决定了推理运行的硬件：
+        #   - device="cuda" 或 device=0: GPU推理（快速，4-6倍加速）
+        #   - device="cpu": CPU推理（慢速，但稳定）
         results = self.model.predict(
             source=color_img,
-            device="cpu",
+            device=self.device,  # 使用节点初始化时指定的设备
             conf=0.4,
             verbose=False
         )
@@ -723,16 +1049,27 @@ class YoloGrabNode(Node):
         #
         if self.target_class_ids:
             filtered_boxes = []
+            other_objects = {}  # 存储其他检测到的物体及其数量 {类别名: 数量}
+            
             for box in results[0].boxes:
                 cls = int(box.cls[0].cpu().numpy())
+                class_name = self.class_names[cls]
+                
                 # 只保留类别 ID 在目标列表中的检测框
                 if cls in self.target_class_ids:
                     filtered_boxes.append(box)
+                else:
+                    # 统计其他物体
+                    other_objects[class_name] = other_objects.get(class_name, 0) + 1
             
             # 如果没有找到目标类别的检测框，则记录日志并返回
             if not filtered_boxes:
                 target_class_names = ', '.join([self.class_names[cid] for cid in self.target_class_ids])
-                self.get_logger().info(f"未检测到目标物体: {target_class_names}（检测到其他物体）")
+                
+                # 构建其他物体的列表字符串
+                other_objects_str = ', '.join([f"{name}({count})" for name, count in other_objects.items()])
+                
+                self.get_logger().info(f"未检测到目标物体: {target_class_names} | 检测到其他物体: {other_objects_str}")
                 return
             
             # 使用过滤后的检测框更新结果
@@ -792,7 +1129,7 @@ class YoloGrabNode(Node):
 
         # ============ 保存标注后的图像 ============
         # 保存带标注的彩色图
-        self.save_image(annotated_img, timestamp, suffix="detected_color")
+        # self.save_image(annotated_img, timestamp, suffix="detected_color")
         
         # 保存带标注的深度图
         # self.save_image(depth_annotated, timestamp, suffix="detected_depth")
@@ -807,38 +1144,88 @@ class YoloGrabNode(Node):
         # ============ 转换到相机坐标系下的3D坐标 ============
         # 将像素坐标 (cx, cy) 和深度值 cz 转换为真实的相机坐标系下的3D坐标
         # 这一步是关键：从2D图像空间 + 深度值 → 3D相机坐标空间
+        coords_3d = self.pixel_to_3d_camera_coords(cx, cy, cz)
+        
+        # 检查坐标转换是否成功，如果失败则忽略本次数据直接返回
+        if not coords_3d.get('valid', False):
+            self.get_logger().warn(f"⚠ 3D坐标转换失败：{coords_3d.get('error', '未知错误')}。忽略本帧数据，进行下次检测。")
+            return
+        
         try:
-            coords_3d = self.pixel_to_3d_camera_coords(cx, cy, cz)
             X_3d = coords_3d['X']  # 相机坐标系 X（向右）
             Y_3d = coords_3d['Y']  # 相机坐标系 Y（向下）
             Z_3d = coords_3d['Z']  # 相机坐标系 Z（沿光轴向前）
             
-            # 发布 Pose（包含真实的3D相机坐标）
-            pose = Pose()
-            pose.position.x = X_3d     # 单位：米，相机坐标系中向右为正
-            pose.position.y = Y_3d     # 单位：米，相机坐标系中向下为正
-            pose.position.z = Z_3d     # 单位：米，相机坐标系中沿光轴向前为正
-            
-            pose.orientation.w = 1.0  # 无旋转（单位四元数）
-            
-            self.pub.publish(pose)
-            
             self.get_logger().info(
-                f"✓ Grasp point (3D Camera Coords): X={X_3d:.3f}m, Y={Y_3d:.3f}m, Z={Z_3d:.3f}m "
-                f"| Image pixel: ({cx:.1f}, {cy:.1f}) | Detected {len(results[0].boxes)} objects"
+                f"✓ 相机坐标系3D点: X={X_3d:.3f}m, Y={Y_3d:.3f}m, Z={Z_3d:.3f}m "
+                f"| Image pixel: ({cx:.1f}, {cy:.1f})"
             )
-        except RuntimeError as e:
-            # 如果相机内参未初始化，降级到使用像素坐标
-            self.get_logger().warn(
-                f"无法进行3D坐标转换：{str(e)}。使用像素坐标作为替代。"
-            )
-            pose = Pose()
-            pose.position.x = cx       # 像素 x（0~图像宽度）
-            pose.position.y = cy       # 像素 y（0~图像高度）
-            pose.position.z = cz       # 深度（单位：米）
-            pose.orientation.w = 1.0
             
-            self.pub.publish(pose)
+            # ============ 变换到目标基座坐标系 ============
+            # 将相机坐标系下的3D点变换到机器人基座坐标系（L_base_link 或 R_base_link）
+            # 这是为了让机器人抓取规划器能在基座坐标系下工作
+            coords_base = self.transform_point_to_target_frame(coords_3d)
+            
+            if coords_base['success']:
+                # 变换成功，使用基座坐标系下的坐标
+                X_base = coords_base['X']
+                Y_base = coords_base['Y']
+                Z_base = coords_base['Z']
+                
+                self.get_logger().info(
+                    f"✓ 基座坐标系3D点 ({coords_base['frame_id']}): "
+                    f"X={X_base:.3f}m, Y={Y_base:.3f}m, Z={Z_base:.3f}m"
+                )
+                
+                # 发布基座坐标系下的PoseStamped
+                pose_stamped = PoseStamped()
+                pose_stamped.header.stamp = self.get_clock().now().to_msg()
+                pose_stamped.header.frame_id = coords_base['frame_id']
+                pose_stamped.pose.position.x = X_base
+                pose_stamped.pose.position.y = Y_base
+                pose_stamped.pose.position.z = Z_base
+                pose_stamped.pose.orientation.w = 1.0  # 无旋转
+                self.pub.publish(pose_stamped)
+                
+                self.get_logger().info(
+                    f"✓ 抓取点发布到 {coords_base['frame_id']} frame | "
+                    f"检测到 {len(results[0].boxes)} 个物体"
+                )
+                self.get_logger().info("-" * 50)
+            else:
+                # 变换失败，降级到相机坐标系
+                self.get_logger().warn(
+                    f"⚠ 无法变换到 {self.target_frame}: {coords_base['error']}"
+                )
+                pose_stamped = PoseStamped()
+                pose_stamped.header.stamp = self.get_clock().now().to_msg()
+                pose_stamped.header.frame_id = self.camera_optical_frame
+                pose_stamped.pose.position.x = X_3d
+                pose_stamped.pose.position.y = Y_3d
+                pose_stamped.pose.position.z = Z_3d
+                pose_stamped.pose.orientation.w = 1.0
+                self.pub.publish(pose_stamped)
+                
+                self.get_logger().info(
+                    f"✓ Published in camera frame ({self.camera_optical_frame}) as fallback | "
+                    f"Detected {len(results[0].boxes)} objects"
+                )
+                self.get_logger().info("-" * 50)
+        
+        except Exception as e:
+            # 其他意外的错误，降级到使用像素坐标
+            self.get_logger().warn(
+                f"发生意外错误：{str(e)}。使用像素坐标作为替代。"
+            )
+            pose_stamped = PoseStamped()
+            pose_stamped.header.stamp = self.get_clock().now().to_msg()
+            pose_stamped.header.frame_id = self.camera_optical_frame
+            pose_stamped.pose.position.x = cx       # 像素 x（0~图像宽度）
+            pose_stamped.pose.position.y = cy       # 像素 y（0~图像高度）
+            pose_stamped.pose.position.z = cz       # 深度（单位：米）
+            pose_stamped.pose.orientation.w = 1.0
+            
+            self.pub.publish(pose_stamped)
             
             self.get_logger().info(
                 f"Primary grasp point (Pixel coords): ({cx:.1f}, {cy:.1f}, {cz:.3f}m) "
