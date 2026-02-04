@@ -307,9 +307,7 @@ class YoloGrabNode(Node):
                     except Exception as e:
                         self.get_logger().warn(f"Failed to delete {old_file}: {str(e)}")
                 
-                self.get_logger().info(
-                    f"Cleaned up {num_to_delete} old file(s), keeping latest {max_files} files"
-                )
+                # self.get_logger().debug(f"Cleaned up {num_to_delete} old file(s), keeping latest {max_files} files")
         except Exception as e:
             self.get_logger().warn(f"Error during cleanup: {str(e)}")
 
@@ -392,6 +390,73 @@ class YoloGrabNode(Node):
         # self.get_logger().info("2. 查看日志中实际深度值范围 (下面的YOLO回调会输出)")
         # self.get_logger().info("3. 通过对已知距离物体的测量来校准")
         # self.get_logger().info("=" * 60)
+
+    def filter_detections_by_target_classes(self, results):
+        """根据目标类别过滤检测框
+        
+        如果指定了 target_class_ids，则从 results[0].boxes 中过滤出该类别的检测框
+        同时统计其他物体的数量并记录日志
+        
+        Args:
+            results: YOLO 检测结果，包含 results[0].boxes 和 results[0].names
+        
+        Returns:
+            bool: 是否成功保留了目标类别的检测框
+                  - True: 保留了目标物体，results[0].boxes 已更新
+                  - False: 未找到目标物体，results[0].boxes 未修改，应该忽略本帧
+        
+        Side Effects:
+            - 直接修改 results[0].boxes，只保留目标类别的检测框
+            - 记录日志信息
+        
+        Examples:
+            >>> results = self.model.predict(source=color_img, device=self.device, conf=0.4)
+            >>> if self.filter_detections_by_target_classes(results):
+            ...     # 继续处理 results[0].boxes（已过滤）
+            ...     for box in results[0].boxes:
+            ...         process(box)
+            ... else:
+            ...     # 本帧未检测到目标物体，忽略
+            ...     return
+        """
+        # 如果未指定目标类别，则不进行过滤，接受所有检测框
+        if not self.target_class_ids:
+            return True
+        
+        # ============ 遍历所有检测框，按类别分类 ============
+        filtered_boxes = []  # 符合目标类别的检测框
+        other_objects = {}   # 其他物体的统计信息 {类别名: 数量}
+        
+        for box in results[0].boxes:
+            cls = int(box.cls[0].cpu().numpy())
+            class_name = self.class_names[cls]
+            
+            # 按类别决定是否保留该检测框
+            if cls in self.target_class_ids:
+                filtered_boxes.append(box)
+            else:
+                # 统计未被过滤的物体及其数量
+                other_objects[class_name] = other_objects.get(class_name, 0) + 1
+        
+        # ============ 检查是否找到目标类别 ============
+        if not filtered_boxes:
+            # 未找到目标类别，生成日志信息
+            target_class_names = ', '.join([self.class_names[cid] for cid in self.target_class_ids])
+            other_objects_str = ', '.join([f"{name}({count})" for name, count in other_objects.items()])
+            
+            self.get_logger().info(f"未检测到目标物体: {target_class_names} | 检测到其他物体: {other_objects_str}")
+            self.get_logger().info("-" * 70)
+            
+            # 返回False，表示过滤失败，调用方应忽略本帧
+            return False
+        
+        # ============ 更新检测框列表 ============
+        # 直接修改 results[0].boxes，只保留过滤后的检测框
+        # 注意：results[0].names 保持不变，仍是模型的完整类别映射
+        results[0].boxes = filtered_boxes
+        
+        # 返回True，表示过滤成功，检测框列表已更新
+        return True
 
     def draw_label_with_background(self, img, label, x1, y1, x2, y2, color):
         """绘制标签背景和文字，智能处理边界
@@ -1028,43 +1093,10 @@ class YoloGrabNode(Node):
             return
 
         # ============ 目标类别过滤 ============
-        # 如果指定了 target_class_ids，则只保留该类别的检测框
-        # 
-        # 说明：
-        #   - 只修改 results[0].boxes，不需要修改 results[0].names
-        #   - results[0].names 是模型的类别映射（{0: 'person', 1: 'bicycle', ...}），是静态的
-        #   - 每个 box 的 box.cls 保存类别 ID，通过 results[0].names[class_id] 可以获取类别名称
-        #   - 所以过滤 boxes 后，names 仍然能正确地为剩余的 boxes 查询类别名称
-        #
-        if self.target_class_ids:
-            filtered_boxes = []
-            other_objects = {}  # 存储其他检测到的物体及其数量 {类别名: 数量}
-            
-            for box in results[0].boxes:
-                cls = int(box.cls[0].cpu().numpy())
-                class_name = self.class_names[cls]
-                
-                # 只保留类别 ID 在目标列表中的检测框
-                if cls in self.target_class_ids:
-                    filtered_boxes.append(box)
-                else:
-                    # 统计其他物体
-                    other_objects[class_name] = other_objects.get(class_name, 0) + 1
-            
-            # 如果没有找到目标类别的检测框，则记录日志并返回
-            if not filtered_boxes:
-                target_class_names = ', '.join([self.class_names[cid] for cid in self.target_class_ids])
-                
-                # 构建其他物体的列表字符串
-                other_objects_str = ', '.join([f"{name}({count})" for name, count in other_objects.items()])
-                
-                self.get_logger().info(f"未检测到目标物体: {target_class_names} | 检测到其他物体: {other_objects_str}")
-                self.get_logger().info("-" * 70)
-                return
-            
-            # 使用过滤后的检测框更新结果
-            # 这样后续的绘制和处理代码只会处理目标类别的物体
-            results[0].boxes = filtered_boxes
+        # 调用过滤方法，按目标类别筛选检测框
+        # 如果未找到目标类别，filter_detections_by_target_classes() 会返回 False 并记录日志
+        if not self.filter_detections_by_target_classes(results):
+            return
         
         # ============ 创建标注图像 ============
         # 创建彩色图的副本用于绘制标注
@@ -1146,8 +1178,8 @@ class YoloGrabNode(Node):
             Z_3d = coords_3d['Z']  # 相机坐标系 Z（沿光轴向前）
             
             self.get_logger().info(
-                f"✓ 相机坐标系3D点: X={X_3d:.3f}m, Y={Y_3d:.3f}m, Z={Z_3d:.3f}m "
-                f"| Image pixel: ({cx:.1f}, {cy:.1f})"
+                f"✓ 抓取点在相机坐标系的坐标: X={X_3d:.3f}m, Y={Y_3d:.3f}m, Z={Z_3d:.3f}m "
+                f"| 像素坐标: ({cx:.1f}, {cy:.1f})"
             )
             
             # ============ 变换到目标基座坐标系 ============
@@ -1162,7 +1194,7 @@ class YoloGrabNode(Node):
                 Z_base = coords_base['Z']
                 
                 self.get_logger().info(
-                    f"✓ 基座坐标系3D点 ({coords_base['frame_id']}): "
+                    f"✓ 抓取点在 ({coords_base['frame_id']}) 坐标系内的坐标: "
                     f"X={X_base:.3f}m, Y={Y_base:.3f}m, Z={Z_base:.3f}m"
                 )
                 
@@ -1177,7 +1209,7 @@ class YoloGrabNode(Node):
                 self.pub.publish(pose_stamped)
                 
                 self.get_logger().info(
-                    f"✓ 抓取点发布到 {coords_base['frame_id']} frame | "
+                    f"✓ 已发布抓取点在 {coords_base['frame_id']} 坐标系下的坐标 | "
                     f"检测到 {len(results[0].boxes)} 个物体"
                 )
                 self.get_logger().info("-" * 70)
@@ -1196,8 +1228,8 @@ class YoloGrabNode(Node):
                 self.pub.publish(pose_stamped)
                 
                 self.get_logger().info(
-                    f"✓ Published in camera frame ({self.ob_camera_frame}) as fallback | "
-                    f"Detected {len(results[0].boxes)} objects"
+                    f"✓ 已发布抓取点在相机坐标系 ({self.ob_camera_frame}) 下的坐标 | "
+                    f"检测到 {len(results[0].boxes)} 个物体"
                 )
                 self.get_logger().info("-" * 70)
         
@@ -1217,8 +1249,8 @@ class YoloGrabNode(Node):
             self.pub.publish(pose_stamped)
             
             self.get_logger().info(
-                f"Primary grasp point (Pixel coords): ({cx:.1f}, {cy:.1f}, {cz:.3f}m) "
-                f"[raw_depth={cz_raw}] | Detected {len(results[0].boxes)} objects"
+                f"抓取点（2D像素坐标）：({cx:.1f}, {cy:.1f}, {cz:.3f}m) "
+                f"[原始深度={cz_raw}] | 检测到 {len(results[0].boxes)} 个物体"
             )
 
 
