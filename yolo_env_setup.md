@@ -98,3 +98,35 @@ ros2 pkg create grab_demo \
 mkdir -p ~/sdk_demo/yolo_models && cd ~/sdk_demo/yolo_models
 wget https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.pt
 
+
+识别到了物体中心在相机坐标系内的3D坐标，通过tf树可得到点在基坐标系内的3D坐标
+
+为了使用movit2 进行 IK 解算，先安装：
+
+sudo apt install ros-humble-moveit
+sudo apt install ros-humble-moveit-ros-visualization
+
+<!-- 
+如果网速过慢，可尝试在 /etc/apt/apt.conf.d/95proxies 内增加代理设置：
+Acquire::http::Proxy "http://10.10.33.101:7890/";
+Acquire::https::Proxy "http://10.10.33.101:7890/";
+ -->
+
+<!-- 
+或者修改 /etc/apt/sources.list 为如下：
+deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy main restricted universe multiverse
+deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates main restricted universe multiverse
+deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security main restricted universe multiverse
+ -->
+
+. ~/tiangong2pro_tf/install/setup.bash && . ~/sdk_demo/install/setup.bash
+
+启动tf树：
+ros2 launch tiangong2pro_urdf display_with_hands.launch.py
+
+启动 moveit2 配置向导：
+ros2 run moveit_setup_assistant moveit_setup_assistant
+
+启动 moveit2 服务：
+ros2 launch moveit2_config move_group.launch.py
+ros2 launch moveit2_config moveit_rviz.launch.py

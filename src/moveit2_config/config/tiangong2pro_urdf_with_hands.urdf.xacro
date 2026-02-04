@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="tiangong2pro_urdf_with_hands">
+    <xacro:arg name="initial_positions_file" default="initial_positions.yaml" />
+
+    <!-- Import tiangong2pro_urdf_with_hands urdf file -->
+    <xacro:include filename="$(find tiangong2pro_urdf)/urdf/tiangong2.0_complete_with_hands.xacro" />
+
+    <!-- Import control_xacro -->
+    <xacro:include filename="tiangong2pro_urdf_with_hands.ros2_control.xacro" />
+
+
+    <xacro:tiangong2pro_urdf_with_hands_ros2_control name="FakeSystem" initial_positions_file="$(arg initial_positions_file)"/>
+
+</robot>

@@ -1,0 +1,25 @@
+moveit_setup_assistant_config:
+  urdf:
+    package: tiangong2pro_urdf
+    relative_path: urdf/tiangong2.0_complete_with_hands.xacro
+  srdf:
+    relative_path: config/tiangong2pro_urdf_with_hands.srdf
+  package_settings:
+    author_name: han.li
+    author_email: han.li@ubtrobot.com
+    generated_timestamp: 1770193830
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity
+  modified_urdf:
+    xacros:
+      - control_xacro
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity
