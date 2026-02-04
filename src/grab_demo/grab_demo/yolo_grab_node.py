@@ -837,16 +837,16 @@ class YoloGrabNode(Node):
             
             # ============ 步骤2：查询TF变换 ============
             # 从TF缓冲区查询从相机坐标系到目标坐标系的变换
-            # 使用较长的超时时间（1秒）以应对启动时的TF缓冲区延迟
+            # 使用较长的超时时间（8秒）以应对启动时的TF缓冲区延迟
             # 节点刚启动时，TF树需要时间来发布和缓冲变换数据
             # 通常几秒后就会正常，但新连接可能需要等待
             try:
-                # 尝试查询最新的变换（超时1秒）
+                # 尝试查询最新的变换（超时8秒）
                 transform = self.tf_buffer.lookup_transform(
                     target_frame,
                     self.ob_camera_frame,
                     rclpy.time.Time(),  # 查询最新的变换
-                    timeout=rclpy.duration.Duration(seconds=5.0)  # 等待最多5秒
+                    timeout=rclpy.duration.Duration(seconds=8.0)  # 等待
                 )
             except (tf2_ros.LookupException, tf2_ros.ConnectivityException):
                 # 如果最新时间戳失败，尝试查询最近可用的（通常在缓冲区内）
@@ -855,7 +855,7 @@ class YoloGrabNode(Node):
                     target_frame,
                     self.ob_camera_frame,
                     rclpy.time.Time(seconds=0),  # 查询最近可用的任何时间戳
-                    timeout=rclpy.duration.Duration(seconds=3.0)
+                    timeout=rclpy.duration.Duration(seconds=5.0)
                 )
             
             # ============ 步骤3：执行坐标系变换 ============
@@ -937,6 +937,62 @@ class YoloGrabNode(Node):
                 'X': None, 'Y': None, 'Z': None
             }
     
+    def publish_grasp_pose(self, coords_3d, pixel_coords, num_detections):
+        """发布抓取点的位姿信息
+        
+        将相机坐标系下的3D点变换到目标基座坐标系并发布为PoseStamped消息
+        如果变换失败则降级发布相机坐标系下的坐标
+        
+        Args:
+            coords_3d (dict): 相机坐标系下的3D坐标，包含 'X', 'Y', 'Z' 键
+            pixel_coords (tuple): 像素坐标和深度值 (cx, cy, cz_raw, cz_meters)
+            num_detections (int): 检测到的物体数量
+        """
+        cx, cy, cz_raw, cz = pixel_coords
+        X_cam, Y_cam, Z_cam = coords_3d['X'], coords_3d['Y'], coords_3d['Z']
+        
+        self.get_logger().info(
+            f"✓ 抓取点在相机坐标系的坐标: X={X_cam:.3f}m, Y={Y_cam:.3f}m, Z={Z_cam:.3f}m "
+            f"| 像素坐标: ({cx:.1f}, {cy:.1f})"
+        )
+        
+        # 变换到目标基座坐标系
+        coords_base = self.transform_point_to_target_frame(coords_3d)
+        
+        # 创建PoseStamped消息
+        pose_stamped = PoseStamped()
+        pose_stamped.header.stamp = self.get_clock().now().to_msg()
+        pose_stamped.pose.orientation.w = 1.0  # 无旋转
+        
+        if coords_base['success']:
+            # 变换成功：使用基座坐标系
+            pose_stamped.header.frame_id = coords_base['frame_id']
+            pose_stamped.pose.position.x = coords_base['X']
+            pose_stamped.pose.position.y = coords_base['Y']
+            pose_stamped.pose.position.z = coords_base['Z']
+            
+            self.get_logger().info(
+                f"✓ 抓取点在 ({coords_base['frame_id']}) 坐标系内的坐标: "
+                f"X={coords_base['X']:.3f}m, Y={coords_base['Y']:.3f}m, Z={coords_base['Z']:.3f}m"
+            )
+        else:
+            # 变换失败：降级到相机坐标系
+            pose_stamped.header.frame_id = self.ob_camera_frame
+            pose_stamped.pose.position.x = X_cam
+            pose_stamped.pose.position.y = Y_cam
+            pose_stamped.pose.position.z = Z_cam
+            
+            self.get_logger().warn(
+                f"⚠ 无法变换到 {self.target_frame}: {coords_base['error']}"
+            )
+        
+        self.pub.publish(pose_stamped)
+        self.get_logger().info(
+            f"✓ 已发布抓取点在 {pose_stamped.header.frame_id} 坐标系下的坐标 | "
+            f"检测到 {num_detections} 个物体"
+        )
+        self.get_logger().info("-" * 70)
+
     def draw_depth_info_on_depth_image(self, img, center_x, center_y, depth_meters):
         """在深度图上绘制中心点标记和深度值
         
@@ -1058,7 +1114,7 @@ class YoloGrabNode(Node):
         color_img = self.bridge.imgmsg_to_cv2(color_msg, "bgr8")
         
         # 深度图：使用 "passthrough" 保持原始编码格式
-        # Orbbec 摄像头的深度图 encoding 可能是 "16UC1" 而不是 "mono16"
+        # Orbbec 摄像头的深度图 encoding 是 "16UC1" 而不是 "mono16"
         # "passthrough" 表示不进行编码转换，直接传递原始数据
         depth_img = self.bridge.imgmsg_to_cv2(depth_msg, desired_encoding="passthrough")
         
@@ -1154,7 +1210,7 @@ class YoloGrabNode(Node):
         # 保存带标注的深度图
         # self.save_image(depth_annotated, timestamp, suffix="detected_depth")
 
-        # ============ 发布抓取点（使用第一个检测框） ============
+        # ============ 发布抓取点（使用第一个检测框，假设只有一个要抓取的物体，例如只有一个苹果在视野内，如果有两个会随机选择第一个） ============
         # 取第一个检测框计算抓取点
         box = results[0].boxes[0]
         
@@ -1164,94 +1220,20 @@ class YoloGrabNode(Node):
         # ============ 转换到相机坐标系下的3D坐标 ============
         # 将像素坐标 (cx, cy) 和深度值 cz 转换为真实的相机坐标系下的3D坐标
         # 这一步是关键：从2D图像空间 + 深度值 → 3D相机坐标空间
-        coords_3d = self.pixel_to_3d_camera_coords(cx, cy, cz)
+        coords_3d_camera_frame = self.pixel_to_3d_camera_coords(cx, cy, cz)
         
         # 检查坐标转换是否成功，如果失败则忽略本次数据直接返回
-        if not coords_3d.get('valid', False):
-            self.get_logger().warn(f"⚠ 3D坐标转换失败：{coords_3d.get('error', '未知错误')}。忽略本帧数据，进行下次检测。")
+        if not coords_3d_camera_frame.get('valid', False):
+            self.get_logger().warn(f"⚠ 3D坐标转换失败：{coords_3d_camera_frame.get('error', '未知错误')}。忽略本帧数据，进行下次检测。")
             self.get_logger().info("-" * 70)
             return
         
+        # 发布抓取点位姿
         try:
-            X_3d = coords_3d['X']  # 相机坐标系 X（向右）
-            Y_3d = coords_3d['Y']  # 相机坐标系 Y（向下）
-            Z_3d = coords_3d['Z']  # 相机坐标系 Z（沿光轴向前）
-            
-            self.get_logger().info(
-                f"✓ 抓取点在相机坐标系的坐标: X={X_3d:.3f}m, Y={Y_3d:.3f}m, Z={Z_3d:.3f}m "
-                f"| 像素坐标: ({cx:.1f}, {cy:.1f})"
-            )
-            
-            # ============ 变换到目标基座坐标系 ============
-            # 将相机坐标系下的3D点变换到机器人基座坐标系（L_base_link 或 R_base_link）
-            # 这是为了让机器人抓取规划器能在基座坐标系下工作
-            coords_base = self.transform_point_to_target_frame(coords_3d)
-            
-            if coords_base['success']:
-                # 变换成功，使用基座坐标系下的坐标
-                X_base = coords_base['X']
-                Y_base = coords_base['Y']
-                Z_base = coords_base['Z']
-                
-                self.get_logger().info(
-                    f"✓ 抓取点在 ({coords_base['frame_id']}) 坐标系内的坐标: "
-                    f"X={X_base:.3f}m, Y={Y_base:.3f}m, Z={Z_base:.3f}m"
-                )
-                
-                # 发布基座坐标系下的PoseStamped
-                pose_stamped = PoseStamped()
-                pose_stamped.header.stamp = self.get_clock().now().to_msg()
-                pose_stamped.header.frame_id = coords_base['frame_id']
-                pose_stamped.pose.position.x = X_base
-                pose_stamped.pose.position.y = Y_base
-                pose_stamped.pose.position.z = Z_base
-                pose_stamped.pose.orientation.w = 1.0  # 无旋转
-                self.pub.publish(pose_stamped)
-                
-                self.get_logger().info(
-                    f"✓ 已发布抓取点在 {coords_base['frame_id']} 坐标系下的坐标 | "
-                    f"检测到 {len(results[0].boxes)} 个物体"
-                )
-                self.get_logger().info("-" * 70)
-            else:
-                # 变换失败，降级到相机坐标系
-                self.get_logger().warn(
-                    f"⚠ 无法变换到 {self.target_frame}: {coords_base['error']}"
-                )
-                pose_stamped = PoseStamped()
-                pose_stamped.header.stamp = self.get_clock().now().to_msg()
-                pose_stamped.header.frame_id = self.ob_camera_frame
-                pose_stamped.pose.position.x = X_3d
-                pose_stamped.pose.position.y = Y_3d
-                pose_stamped.pose.position.z = Z_3d
-                pose_stamped.pose.orientation.w = 1.0
-                self.pub.publish(pose_stamped)
-                
-                self.get_logger().info(
-                    f"✓ 已发布抓取点在相机坐标系 ({self.ob_camera_frame}) 下的坐标 | "
-                    f"检测到 {len(results[0].boxes)} 个物体"
-                )
-                self.get_logger().info("-" * 70)
-        
+            self.publish_grasp_pose(coords_3d_camera_frame, (cx, cy, cz_raw, cz), len(results[0].boxes))
         except Exception as e:
-            # 其他意外的错误，降级到使用像素坐标
-            self.get_logger().warn(
-                f"发生意外错误：{str(e)}。使用像素坐标作为替代。"
-            )
-            pose_stamped = PoseStamped()
-            pose_stamped.header.stamp = self.get_clock().now().to_msg()
-            pose_stamped.header.frame_id = self.ob_camera_frame
-            pose_stamped.pose.position.x = cx       # 像素 x（0~图像宽度）
-            pose_stamped.pose.position.y = cy       # 像素 y（0~图像高度）
-            pose_stamped.pose.position.z = cz       # 深度（单位：米）
-            pose_stamped.pose.orientation.w = 1.0
-            
-            self.pub.publish(pose_stamped)
-            
-            self.get_logger().info(
-                f"抓取点（2D像素坐标）：({cx:.1f}, {cy:.1f}, {cz:.3f}m) "
-                f"[原始深度={cz_raw}] | 检测到 {len(results[0].boxes)} 个物体"
-            )
+            self.get_logger().error(f"发布抓取点失败: {str(e)}")
+            self.get_logger().info("-" * 70)
 
 
 def main():
