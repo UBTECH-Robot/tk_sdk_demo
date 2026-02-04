@@ -14,6 +14,8 @@
     python3 test_pose_publisher.py -x -0.013 -y 0.173 -z 0.694 -f ob_camera_head_link
     python3 test_pose_publisher.py -x -0.052 -y -0.683 -z 0.723 -f pelvis
     python3 test_pose_publisher.py -x -0.013 -y 0.173 -z 0.694 -f ob_camera_head_color_optical_frame
+    python3 test_pose_publisher.py -x 0.160 -y -0.070 -z 0.877 -f ob_camera_head_color_frame
+    python3 test_pose_publisher.py -x 0.692 -y -0.143 -z -0.066 -f pelvis
 
 按下 Ctrl+C 停止发布
 """

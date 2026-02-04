@@ -188,16 +188,15 @@ class YoloGrabNode(Node):
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         
-        # 相机光学坐标系（OpenCV和深度相机的标准坐标系）
-        # 通常是 ob_camera_head_depth_optical_frame 或 ob_camera_head_color_optical_frame
-        self.camera_optical_frame = "ob_camera_head_color_optical_frame"
+        # 相机光学坐标系（OpenCV和深度相机的标准坐标系），实测观察到是 ob_camera_head_color_frame
+        self.ob_camera_frame = "ob_camera_head_color_frame"
         
         # 目标基座坐标系（机器人抓取基准）
         # 对于人形机器人，通常是 L_base_link（左腿基座）或 R_base_link（右腿基座）
         # 用户可通过命令行参数 --target_frame 指定
         self.target_frame = self._parse_target_frame_from_args()
 
-        self.get_logger().info(f"相机光学坐标系: {self.camera_optical_frame}")
+        self.get_logger().info(f"相机光学坐标系: {self.ob_camera_frame}")
         self.get_logger().info(f"目标基座坐标系: {self.target_frame}")
 
     def _parse_target_classes_from_args(self):
@@ -627,11 +626,6 @@ class YoloGrabNode(Node):
             - 相机内参未初始化时不抛异常，返回valid=False
             - 调用方应检查返回值的'valid'字段，如果为False则忽略本次数据
         
-        Examples:
-            >>> # 将检测到的物体中心点转换为3D坐标
-            >>> coords_3d = self.pixel_to_3d_camera_coords(320, 240, 1.5)
-            >>> print(f"3D坐标: X={coords_3d['X']:.3f}m, Y={coords_3d['Y']:.3f}m, Z={coords_3d['Z']:.3f}m")
-        
         Notes:
             - 此方法假设已收到 camera_info 消息并成功提取了内参
             - 深度值应该是从对齐后的深度相机获取
@@ -713,7 +707,7 @@ class YoloGrabNode(Node):
            - 原点在相机镜头的光学中心
         
         2. TF2变换：通过查询TF树获得相机坐标系到目标坐标系的变换矩阵
-           - 从 ob_camera_head_depth_optical_frame 到 L_base_link（或指定的目标坐标系）
+           - 从 ob_camera_head_color_frame 到 L_base_link（或指定的目标坐标系）
            - 该变换包含相对位置和相对旋转
         
         3. 输出：目标坐标系下的3D点 (X_target, Y_target, Z_target)
@@ -722,7 +716,7 @@ class YoloGrabNode(Node):
         
         重要概念：
         ---------
-        - 相机光学坐标系 (ob_camera_head_depth_optical_frame)
+        - 相机光学坐标系 (ob_camera_head_color_frame)
           * OpenCV和ROS深度相机的标准坐标系
           * X向右，Y向下，Z向前（沿光轴）
           * pixel_to_3d_camera_coords() 输出就是这个坐标系
@@ -753,12 +747,6 @@ class YoloGrabNode(Node):
             ValueError: 如果输入点无效
             RuntimeError: 如果TF2变换查询失败
         
-        Examples:
-            >>> # 将相机坐标系的点变换到左腿基座
-            >>> coords_camera = self.pixel_to_3d_camera_coords(320, 240, 1.5)
-            >>> coords_base = self.transform_point_to_target_frame(coords_camera)
-            >>> print(f"基座坐标系: X={coords_base['X']:.3f}m")
-        
         Notes:
             - TF2需要维护完整的坐标系树，确保从相机坐标系到目标坐标系有变换路径
             - 如果变换不可用，会返回错误信息而不是抛出异常（便于调试）
@@ -776,7 +764,7 @@ class YoloGrabNode(Node):
             # 将3D点转换为ROS PointStamped 消息格式
             # 这个消息包含坐标值和坐标系信息，是TF2变换的输入格式
             point_stamped = PointStamped()
-            point_stamped.header.frame_id = self.camera_optical_frame
+            point_stamped.header.frame_id = self.ob_camera_frame
             point_stamped.header.stamp = self.get_clock().now().to_msg()
             point_stamped.point.x = float(point_camera['X'])
             point_stamped.point.y = float(point_camera['Y'])
@@ -791,7 +779,7 @@ class YoloGrabNode(Node):
                 # 尝试查询最新的变换（超时1秒）
                 transform = self.tf_buffer.lookup_transform(
                     target_frame,
-                    self.camera_optical_frame,
+                    self.ob_camera_frame,
                     rclpy.time.Time(),  # 查询最新的变换
                     timeout=rclpy.duration.Duration(seconds=5.0)  # 等待最多5秒
                 )
@@ -800,7 +788,7 @@ class YoloGrabNode(Node):
                 # 这对于刚启动的节点很有效
                 transform = self.tf_buffer.lookup_transform(
                     target_frame,
-                    self.camera_optical_frame,
+                    self.ob_camera_frame,
                     rclpy.time.Time(seconds=0),  # 查询最近可用的任何时间戳
                     timeout=rclpy.duration.Duration(seconds=3.0)
                 )
@@ -817,7 +805,7 @@ class YoloGrabNode(Node):
                 'Y': float(point_transformed.point.y),
                 'Z': float(point_transformed.point.z),
                 'frame_id': target_frame,
-                'camera_frame': self.camera_optical_frame,
+                'camera_frame': self.ob_camera_frame,
                 'success': True,
                 'error': None,
                 'original_camera_coords': {
@@ -832,14 +820,14 @@ class YoloGrabNode(Node):
         except tf2_ros.LookupException as e:
             # 变换不存在（坐标系树中没有连接路径）
             self.get_logger().error(
-                f"TF查询失败：无法找到从 {self.camera_optical_frame} 到 {target_frame} 的变换。"
+                f"TF查询失败：无法找到从 {self.ob_camera_frame} 到 {target_frame} 的变换。"
                 f"原因: {str(e)}"
             )
             return {
                 'success': False,
                 'error': f"LookupException: {str(e)}",
                 'frame_id': target_frame,
-                'camera_frame': self.camera_optical_frame,
+                'camera_frame': self.ob_camera_frame,
                 'X': None, 'Y': None, 'Z': None
             }
         
@@ -853,7 +841,7 @@ class YoloGrabNode(Node):
                 'success': False,
                 'error': f"ConnectivityException: {str(e)}",
                 'frame_id': target_frame,
-                'camera_frame': self.camera_optical_frame,
+                'camera_frame': self.ob_camera_frame,
                 'X': None, 'Y': None, 'Z': None
             }
         
@@ -867,7 +855,7 @@ class YoloGrabNode(Node):
                 'success': False,
                 'error': f"ExtrapolationException: {str(e)}",
                 'frame_id': target_frame,
-                'camera_frame': self.camera_optical_frame,
+                'camera_frame': self.ob_camera_frame,
                 'X': None, 'Y': None, 'Z': None
             }
         
@@ -880,7 +868,7 @@ class YoloGrabNode(Node):
                 'success': False,
                 'error': f"UnexpectedException: {str(e)}",
                 'frame_id': target_frame,
-                'camera_frame': self.camera_optical_frame,
+                'camera_frame': self.ob_camera_frame,
                 'X': None, 'Y': None, 'Z': None
             }
     
@@ -1036,6 +1024,7 @@ class YoloGrabNode(Node):
 
         if len(results[0].boxes) == 0:
             self.get_logger().info("No objects detected")
+            self.get_logger().info("-" * 70)
             return
 
         # ============ 目标类别过滤 ============
@@ -1070,6 +1059,7 @@ class YoloGrabNode(Node):
                 other_objects_str = ', '.join([f"{name}({count})" for name, count in other_objects.items()])
                 
                 self.get_logger().info(f"未检测到目标物体: {target_class_names} | 检测到其他物体: {other_objects_str}")
+                self.get_logger().info("-" * 70)
                 return
             
             # 使用过滤后的检测框更新结果
@@ -1147,6 +1137,7 @@ class YoloGrabNode(Node):
         # 检查坐标转换是否成功，如果失败则忽略本次数据直接返回
         if not coords_3d.get('valid', False):
             self.get_logger().warn(f"⚠ 3D坐标转换失败：{coords_3d.get('error', '未知错误')}。忽略本帧数据，进行下次检测。")
+            self.get_logger().info("-" * 70)
             return
         
         try:
@@ -1189,7 +1180,7 @@ class YoloGrabNode(Node):
                     f"✓ 抓取点发布到 {coords_base['frame_id']} frame | "
                     f"检测到 {len(results[0].boxes)} 个物体"
                 )
-                self.get_logger().info("-" * 50)
+                self.get_logger().info("-" * 70)
             else:
                 # 变换失败，降级到相机坐标系
                 self.get_logger().warn(
@@ -1197,7 +1188,7 @@ class YoloGrabNode(Node):
                 )
                 pose_stamped = PoseStamped()
                 pose_stamped.header.stamp = self.get_clock().now().to_msg()
-                pose_stamped.header.frame_id = self.camera_optical_frame
+                pose_stamped.header.frame_id = self.ob_camera_frame
                 pose_stamped.pose.position.x = X_3d
                 pose_stamped.pose.position.y = Y_3d
                 pose_stamped.pose.position.z = Z_3d
@@ -1205,10 +1196,10 @@ class YoloGrabNode(Node):
                 self.pub.publish(pose_stamped)
                 
                 self.get_logger().info(
-                    f"✓ Published in camera frame ({self.camera_optical_frame}) as fallback | "
+                    f"✓ Published in camera frame ({self.ob_camera_frame}) as fallback | "
                     f"Detected {len(results[0].boxes)} objects"
                 )
-                self.get_logger().info("-" * 50)
+                self.get_logger().info("-" * 70)
         
         except Exception as e:
             # 其他意外的错误，降级到使用像素坐标
@@ -1217,7 +1208,7 @@ class YoloGrabNode(Node):
             )
             pose_stamped = PoseStamped()
             pose_stamped.header.stamp = self.get_clock().now().to_msg()
-            pose_stamped.header.frame_id = self.camera_optical_frame
+            pose_stamped.header.frame_id = self.ob_camera_frame
             pose_stamped.pose.position.x = cx       # 像素 x（0~图像宽度）
             pose_stamped.pose.position.y = cy       # 像素 y（0~图像高度）
             pose_stamped.pose.position.z = cz       # 深度（单位：米）
