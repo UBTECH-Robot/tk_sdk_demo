@@ -103,8 +103,7 @@ wget https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.pt
 
 为了使用movit2 进行 IK 解算，先安装：
 
-sudo apt install ros-humble-moveit
-sudo apt install ros-humble-moveit-ros-visualization
+sudo apt install ros-humble-moveit ros-humble-moveit-ros-visualization
 
 <!-- 
 如果网速过慢，可尝试在 /etc/apt/apt.conf.d/95proxies 内增加代理设置：
