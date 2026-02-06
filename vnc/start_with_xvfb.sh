@@ -157,15 +157,27 @@ echo "启动 GNOME 会话..."
 
 # 直接使用 gnome-session-binary 启动，跳过登录管理器
 if [ -f /usr/libexec/gnome-session-binary ]; then
-    DISPLAY="${DISPLAY}" XAUTHORITY="/tmp/xvfb.Xauth" \
-        /usr/libexec/gnome-session-binary --session=ubuntu 2>/dev/null &
+    if command -v vglrun &> /dev/null; then
+        echo "使用 vglrun 启动 GNOME Session..."
+        DISPLAY="${DISPLAY}" XAUTHORITY="/tmp/xvfb.Xauth" \
+            vglrun +wm /usr/libexec/gnome-session-binary --session=ubuntu 2>/dev/null &
+    else
+        echo "直接启动 GNOME Session..."
+        DISPLAY="${DISPLAY}" XAUTHORITY="/tmp/xvfb.Xauth" \
+            /usr/libexec/gnome-session-binary --session=ubuntu 2>/dev/null &
+    fi
     GNOME_PID=$!
     echo "GNOME Session PID: ${GNOME_PID}"
     sleep 3
 else
     # 备选：使用原始 gnome-session
-    echo "使用 gnome-session..."
-    DISPLAY="${DISPLAY}" gnome-session 2>/dev/null &
+    if command -v vglrun &> /dev/null; then
+        echo "使用 vglrun 启动 GNOME Session..."
+        DISPLAY="${DISPLAY}" vglrun +wm gnome-session 2>/dev/null &
+    else
+        echo "使用 gnome-session..."
+        DISPLAY="${DISPLAY}" gnome-session 2>/dev/null &
+    fi
     GNOME_PID=$!
     echo "GNOME Session PID: ${GNOME_PID}"
     sleep 2
