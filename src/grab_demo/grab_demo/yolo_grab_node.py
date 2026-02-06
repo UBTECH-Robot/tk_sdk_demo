@@ -1,7 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image, CameraInfo
-from geometry_msgs.msg import Pose, PoseStamped, PointStamped
+from geometry_msgs.msg import Pose, PoseStamped, PointStamped, TransformStamped
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
@@ -15,6 +15,7 @@ import tf2_ros
 from tf2_geometry_msgs import PointStamped as TF2PointStamped
 from moveit_msgs.srv import GetPositionIK
 from moveit_msgs.msg import RobotState, PositionIKRequest
+from tf2_ros import StaticTransformBroadcaster
 
 # ros2 run grab_demo yolo_grab_node --target_classes apple
 # 使用 ApproximateTimeSynchronizer 对彩色图和深度图进行帧同步处理，只能运行在41.2的orin板上（也就是头部相机所连接的板）。
@@ -210,6 +211,43 @@ class YoloGrabNode(Node):
         #     self.get_logger().info("✓ /compute_ik 服务已连接")
         # else:
         #     self.get_logger().warn("⚠ /compute_ik 服务未就绪，IK解算功能可能不可用")
+
+        # ============ 发布静态TF变换 ============
+        self.publish_static_transform()
+
+    
+    def publish_static_transform(self):
+        """
+        发布静态TF变换：camera_head_link -> ob_camera_head_link
+        对应命令：ros2 run tf2_ros static_transform_publisher 0.0 0.0 0.0 0 0 0 1 camera_head_link ob_camera_head_link
+        """
+        static_broadcaster = StaticTransformBroadcaster(self)
+        
+        # 创建变换消息
+        static_transform = TransformStamped()
+        static_transform.header.stamp = self.get_clock().now().to_msg()
+        static_transform.header.frame_id = "camera_head_link"
+        static_transform.child_frame_id = "ob_camera_head_link"
+        
+        # 设置位移（平移）：(0.0, 0.0, 0.0)
+        static_transform.transform.translation.x = 0.0
+        static_transform.transform.translation.y = 0.0
+        static_transform.transform.translation.z = 0.0
+        
+        # 设置旋转（四元数）：(0, 0, 0, 1)，表示无旋转
+        static_transform.transform.rotation.x = 0.0
+        static_transform.transform.rotation.y = 0.0
+        static_transform.transform.rotation.z = 0.0
+        static_transform.transform.rotation.w = 1.0
+        
+        # 发送静态变换
+        static_broadcaster.sendTransform(static_transform)
+        
+        self.get_logger().info(
+            f"✓ 静态TF变换已发布: camera_head_link -> ob_camera_head_link"
+        )
+
+
 
     def _parse_target_classes_from_args(self):
         """
@@ -1256,9 +1294,7 @@ class YoloGrabNode(Node):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
 
         # ============ 保存原始图像 ============
-        # 1. 保存彩色原始图片
-        # self.save_image(color_img, timestamp, suffix="raw_color")
-        
+
         # 2. 保存深度原始图片（深度图需要进行可视化处理才能正确显示）
         # 深度图的像素值通常在0-5000mm范围内，需要归一化到0-255以便显示
         depth_normalized = cv2.normalize(depth_img, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
@@ -1280,12 +1316,18 @@ class YoloGrabNode(Node):
         if len(results[0].boxes) == 0:
             self.get_logger().info("No objects detected")
             self.get_logger().info("-" * 70)
+            # 未检测到物体时保存彩色原始图片备查
+            self.save_image(color_img, timestamp, suffix="raw_color")
+        
             return
 
         # ============ 目标类别过滤 ============
         # 调用过滤方法，按目标类别筛选检测框
         # 如果未找到目标类别，filter_detections_by_target_classes() 会返回 False 并记录日志
         if not self.filter_detections_by_target_classes(results):
+            # 未检测到物体时保存彩色原始图片备查
+            self.save_image(color_img, timestamp, suffix="raw_color")
+        
             return
         
         # ============ 创建标注图像 ============
