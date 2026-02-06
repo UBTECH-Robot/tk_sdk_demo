@@ -415,6 +415,7 @@ install_vnc_server() {
     if [ -f noVNC-1.6.0.tar.gz ]; then
         if [ ! -d noVNC ]; then
             tar -zxf noVNC-1.6.0.tar.gz && mv noVNC-1.6.0 noVNC
+            ln -s ${SCRIPT_DIR}/pkg/noVNC/vnc.html ${SCRIPT_DIR}/pkg/noVNC/index.html            
             echo -e "${GREEN}noVNC 解压完成${NC}"
         else
             echo -e "${GREEN}noVNC 已存在，跳过解压${NC}"
