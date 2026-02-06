@@ -2,7 +2,6 @@
 
 # 虚拟X服务器 + 完整桌面环境方案
 # 此方案创建一个虚拟显示器并在其上运行完整的桌面环境
-# 特别注意：禁用登录界面，直接启动桌面
 
 DISPLAY=":99"
 SCREEN_WIDTH="1920"
@@ -18,7 +17,6 @@ echo "分辨率: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}"
 echo ""
 
 # 清理旧的显示
-echo "清理旧的显示..."
 pkill -f "Xvfb.*${DISPLAY}" 2>/dev/null
 pkill -f "x11vnc.*${DISPLAY}" 2>/dev/null
 sleep 1
@@ -56,6 +54,29 @@ export XAUTHORITY="/tmp/xvfb.Xauth"
 
 # 为虚拟显示器创建Xauthority
 xauth add "${DISPLAY}" . "$(xxd -l 16 -p /dev/urandom)" 2>/dev/null || true
+
+# 启动窗口管理器 (使用 openbox 如果可用，否则使用 fluxbox)
+echo ""
+echo "启动窗口管理器..."
+
+if command -v openbox &> /dev/null; then
+    openbox --display "${DISPLAY}" &
+    WM_PID=$!
+    echo "启动 openbox (PID: ${WM_PID})"
+elif command -v fluxbox &> /dev/null; then
+    fluxbox -display "${DISPLAY}" &
+    WM_PID=$!
+    echo "启动 fluxbox (PID: ${WM_PID})"
+elif command -v mwm &> /dev/null; then
+    mwm -display "${DISPLAY}" &
+    WM_PID=$!
+    echo "启动 mwm (PID: ${WM_PID})"
+else
+    echo "警告: 未找到窗口管理器，使用 x11vnc 的内置支持"
+    WM_PID=""
+fi
+
+sleep 1
 
 # 启动壁纸和其他X应用 (可选)
 DISPLAY="${DISPLAY}" xsetroot -solid "#1e1e2e" 2>/dev/null || true
@@ -117,37 +138,19 @@ echo ""
 echo "启动GNOME桌面..."
 export VGL_DISPLAY="egl"
 export VGL_REFRESHRATE="60"
-export DISPLAY="${DISPLAY}"
-export XAUTHORITY="/tmp/xvfb.Xauth"
 
-# 设置 X11 会话（避免 Wayland 导致的问题）
-export XDG_SESSION_TYPE=x11
-
-# 初始化 D-Bus 会话
-eval $(dbus-launch --sh-syntax 2>/dev/null) || true
-export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket 2>/dev/null || true
-
-# 禁用 GNOME 屏保和自动锁屏，避免登录界面
-dconf write /org/gnome/desktop/screensaver/lock-enabled false 2>/dev/null || true
-dconf write /org/gnome/desktop/session/idle-delay 0 2>/dev/null || true
-
-echo "启动 GNOME 会话..."
-
-# 直接使用 gnome-session-binary 启动，跳过登录管理器
-if [ -f /usr/libexec/gnome-session-binary ]; then
-    DISPLAY="${DISPLAY}" XAUTHORITY="/tmp/xvfb.Xauth" \
-        /usr/libexec/gnome-session-binary --session=ubuntu 2>/dev/null &
+# 检查是否有vglrun命令
+if command -v vglrun &> /dev/null; then
+    echo "使用 vglrun 启动 gnome-session..."
+    vglrun +wm gnome-session &
     GNOME_PID=$!
-    echo "GNOME Session PID: ${GNOME_PID}"
-    sleep 3
 else
-    # 备选：使用原始 gnome-session
-    echo "使用 gnome-session..."
-    DISPLAY="${DISPLAY}" gnome-session 2>/dev/null &
+    echo "vglrun 不可用，直接启动 gnome-session..."
+    gnome-session &
     GNOME_PID=$!
-    echo "GNOME Session PID: ${GNOME_PID}"
-    sleep 2
 fi
+
+sleep 1
 
 # 获取IP地址
 IP_ADDR=$(hostname -I | awk '{print $1}')
@@ -174,6 +177,8 @@ cleanup() {
     kill ${NOVNC_PID} 2>/dev/null
     kill ${X11VNC_PID} 2>/dev/null
     [ -n "${GNOME_PID}" ] && kill ${GNOME_PID} 2>/dev/null
+    [ -n "${WM_PID}" ] && kill ${WM_PID} 2>/dev/null
+    [ -n "${TERM_PID}" ] && kill ${TERM_PID} 2>/dev/null
     kill ${XVFB_PID} 2>/dev/null
     wait
 }
