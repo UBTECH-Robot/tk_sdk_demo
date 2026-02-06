@@ -1,6 +1,6 @@
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image, CameraInfo
+from sensor_msgs.msg import Image, CameraInfo, JointState
 from geometry_msgs.msg import Pose, PoseStamped, PointStamped, TransformStamped
 from cv_bridge import CvBridge
 import cv2
@@ -18,12 +18,39 @@ from moveit_msgs.msg import RobotState, PositionIKRequest
 from tf2_ros import StaticTransformBroadcaster
 
 # ros2 run grab_demo yolo_grab_node --target_classes apple
-# 使用 ApproximateTimeSynchronizer 对彩色图和深度图进行帧同步处理，只能运行在41.2的orin板上（也就是头部相机所连接的板）。
+# 由于使用 ApproximateTimeSynchronizer 对彩色图和深度图进行帧同步处理，所以只推荐运行在41.2的orin板上（也就是头部相机所连接的板）。
 # 在41.1的x86板上运行则会出现无法进行同步的问题，彩色图和深度图的传输会大量无效占用带宽，导致 synchronized_image_cb 回调长时间无法被调用。
 
 class YoloGrabNode(Node):
     def __init__(self):
         super().__init__("yolo_grab_node")
+
+        # ============ MoveIt2 规划组配置 ============
+        # 定义各规划组包含的关节
+        # 这些关节名称来自 moveit2_config/config/tiangong2pro_urdf_with_hands.srdf
+        self.group_joints = {
+            'left_arm': [
+                'shoulder_pitch_l_joint',
+                'shoulder_roll_l_joint',
+                'shoulder_yaw_l_joint',
+                'elbow_pitch_l_joint',
+                'elbow_yaw_l_joint',
+                'wrist_pitch_l_joint',
+                'wrist_roll_l_joint',
+            ],
+            'right_arm': [
+                'shoulder_pitch_r_joint',
+                'shoulder_roll_r_joint',
+                'shoulder_yaw_r_joint',
+                'elbow_pitch_r_joint',
+                'elbow_yaw_r_joint',
+                'wrist_pitch_r_joint',
+                'wrist_roll_r_joint',
+            ]
+        }
+
+        # ============ 发布静态TF变换 ============
+        self.publish_static_transform()
 
         self.bridge = CvBridge()
 
@@ -211,9 +238,22 @@ class YoloGrabNode(Node):
         #     self.get_logger().info("✓ /compute_ik 服务已连接")
         # else:
         #     self.get_logger().warn("⚠ /compute_ik 服务未就绪，IK解算功能可能不可用")
-
-        # ============ 发布静态TF变换 ============
-        self.publish_static_transform()
+        
+        # ============ 订阅当前机器人状态 ============
+        # IK服务需要当前的机器人关节状态作为初始配置
+        # 不提供有效的robot_state会导致MoveIt2返回 "Found empty JointState message" 错误
+        self.current_joint_state = None
+        self.joint_states_sub = self.create_subscription(
+            JointState,
+            '/joint_states',
+            self.joint_states_callback,
+            10
+        )
+        self.get_logger().info("已订阅 /joint_states 话题")
+        
+        # ============ IK 异步处理 ============
+        # 用于在回调中异步处理 IK 服务结果
+        self.pending_ik_futures = {}
 
     
     def publish_static_transform(self):
@@ -246,6 +286,17 @@ class YoloGrabNode(Node):
         self.get_logger().info(
             f"✓ 静态TF变换已发布: camera_head_link -> ob_camera_head_link"
         )
+
+    
+    def joint_states_callback(self, msg):
+        """获取当前机器人关节状态
+        
+        存储最新的关节状态消息，供IK服务使用
+        
+        Args:
+            msg: sensor_msgs/msg/JointState 消息
+        """
+        self.current_joint_state = msg
 
 
 
@@ -988,117 +1039,110 @@ class YoloGrabNode(Node):
             }
     
     def compute_ik_for_grasp(self, target_pose_stamped, group_name="left_arm"):
-        """调用MoveIt2的IK服务解算抓取位姿的关节角度
+        """异步调用MoveIt2的IK服务解算抓取位姿
+        
+        不在回调中阻塞等待，而是注册异步完成回调
         
         Args:
-            target_pose_stamped (PoseStamped): 目标抓取位姿（包含坐标系信息）
-            group_name (str): MoveIt规划组名称，默认为左臂
-                常见值: "left_arm", "right_arm"
+            target_pose_stamped (PoseStamped): 目标抓取位姿
+            group_name (str): MoveIt规划组名称
         
         Returns:
-            dict: IK解算结果，包含：
-                - 'success': bool, 解算是否成功
-                - 'joint_names': list, 关节名称列表
-                - 'joint_positions': list, 关节角度列表（单位：弧度）
-                - 'error_code': int, 错误代码（1=成功，其他值表示失败原因）
-                - 'error_message': str, 错误信息
+            str: future 的 ID，用于追踪异步结果（或失败消息）
         """
-        # 检查服务是否可用
+        # 检查前置条件
+        if self.current_joint_state is None:
+            self.get_logger().warn('⚠ 尚未接收到关节状态，无法调用 IK 服务')
+            return None
+        
         if not self.ik_client.service_is_ready():
-            if not self.ik_client.wait_for_service(timeout_sec=2.0):
-                return {
-                    'success': False,
-                    'error_message': '/compute_ik 服务不可用',
-                    'error_code': -1
-                }
+            self.get_logger().warn('⚠ /compute_ik 服务不可用')
+            return None
         
         try:
-            # ============ 构建IK请求 ============
+            # 构建 IK 请求
             request = GetPositionIK.Request()
-            
-            # 设置IK请求参数
             request.ik_request.group_name = group_name
             request.ik_request.pose_stamped = target_pose_stamped
-            
-            # 不设置robot_state字段，让MoveIt2使用其内部维护的当前机器人状态
-            # 注意：设置空的RobotState()会导致 "Found empty JointState message" 错误
-            # request.ik_request.robot_state = RobotState()  # 错误的做法
-            
-            # 设置超时时间（秒）
+            request.ik_request.robot_state = RobotState()
+            request.ik_request.robot_state.joint_state = self.current_joint_state
             request.ik_request.timeout.sec = 5
-            
-            # 避免碰撞约束
             request.ik_request.avoid_collisions = True
             
-            self.get_logger().info(f"发送IK请求: group={group_name}, frame={target_pose_stamped.header.frame_id}")
+            # self.get_logger().info(f"发送异步 IK 请求: group={group_name}, frame={target_pose_stamped.header.frame_id}")
             
-            # ============ 调用IK服务 ============
+            # 异步调用 - 不阻塞，直接返回 future
+            import time
             future = self.ik_client.call_async(request)
             
-            # 等待结果（同步等待，最多5秒）
-            rclpy.spin_until_future_complete(self, future, timeout_sec=5.0)
+            # 为 future 添加完成回调
+            future_id = id(future)
+            self.pending_ik_futures[future_id] = {
+                'future': future,
+                'group_name': group_name,
+                'pose': target_pose_stamped,
+                'start_time': time.time()  # 记录请求发送时间
+            }
             
-            if not future.done():
-                return {
-                    'success': False,
-                    'error_message': 'IK服务调用超时',
-                    'error_code': -2
-                }
+            # 注册完成回调
+            future.add_done_callback(lambda f: self._ik_done_callback(future_id))
+            
+            return future_id
+            
+        except Exception as e:
+            self.get_logger().error(f"IK 服务异步调用异常: {str(e)}")
+            return None
+    
+    def _ik_done_callback(self, future_id):
+        """IK 服务异步完成回调
+        
+        在回调中处理 IK 结果，不阻塞主事件循环
+        """
+        if future_id not in self.pending_ik_futures:
+            return
+        
+        try:
+            import time
+            future_data = self.pending_ik_futures.pop(future_id)
+            future = future_data['future']
+            group_name = future_data['group_name']
+            start_time = future_data['start_time']
+            
+            # 计算解算耗时
+            elapsed_time = time.time() - start_time
             
             response = future.result()
-            
-            # ============ 解析IK结果 ============
-            # error_code.val 的含义：
-            # 1 = SUCCESS (成功)
-            # -1 = FAILURE (失败)
-            # -2 = TIMED_OUT (超时)
-            # -31 = NO_IK_SOLUTION (无解)
             error_code = response.error_code.val
             
             if error_code == 1:  # SUCCESS
                 joint_state = response.solution.joint_state
-                
-                result = {
-                    'success': True,
-                    'joint_names': list(joint_state.name),
-                    'joint_positions': list(joint_state.position),
-                    'error_code': error_code,
-                    'error_message': 'IK解算成功'
-                }
-                
-                # 打印关节角度
                 self.get_logger().info("=" * 70)
                 self.get_logger().info(f"✓ IK解算成功 (group: {group_name})")
+                self.get_logger().info(f"解算耗时: {elapsed_time*1000:.2f}ms")
                 self.get_logger().info("关节角度解算结果:")
-                for name, pos in zip(result['joint_names'], result['joint_positions']):
-                    self.get_logger().info(f"  {name}: {pos:.4f} rad ({np.degrees(pos):.2f}°)")
-                self.get_logger().info("=" * 70)
                 
-                return result
+                # 只显示该规划组相关的关节
+                group_joint_names = self.group_joints.get(group_name, [])
+                for name, pos in zip(joint_state.name, joint_state.position):
+                    if name in group_joint_names:
+                        self.get_logger().info(f"  {name}: {pos:.4f} rad ({np.degrees(pos):.2f}°)")
+                
+                self.get_logger().info("=" * 70)
             else:
-                # IK解算失败
                 error_messages = {
                     -1: "解算失败",
                     -2: "超时",
                     -31: "无IK解（目标位置可能超出机械臂工作空间）"
                 }
                 error_msg = error_messages.get(error_code, f"未知错误 (code={error_code})")
+                self.get_logger().warn(f"⚠ IK解算失败: {error_msg} (耗时: {elapsed_time*1000:.2f}ms)")
                 
-                self.get_logger().warn(f"⚠ IK解算失败: {error_msg}")
-                
-                return {
-                    'success': False,
-                    'error_message': error_msg,
-                    'error_code': error_code
-                }
-        
         except Exception as e:
-            self.get_logger().error(f"IK服务调用异常: {str(e)}")
-            return {
-                'success': False,
-                'error_message': f'异常: {str(e)}',
-                'error_code': -99
-            }
+            self.get_logger().error(f"IK 完成回调异常: {str(e)}")
+        finally:
+            # 清理引用
+            if future_id in self.pending_ik_futures:
+                del self.pending_ik_futures[future_id]
     
     def publish_grasp_pose(self, coords_3d, pixel_coords, num_detections):
         """发布抓取点的位姿信息
@@ -1114,10 +1158,10 @@ class YoloGrabNode(Node):
         cx, cy, cz_raw, cz = pixel_coords
         X_cam, Y_cam, Z_cam = coords_3d['X'], coords_3d['Y'], coords_3d['Z']
         
-        self.get_logger().info(
-            f"✓ 抓取点在相机坐标系的坐标: X={X_cam:.3f}m, Y={Y_cam:.3f}m, Z={Z_cam:.3f}m "
-            f"| 像素坐标: ({cx:.1f}, {cy:.1f})"
-        )
+        # self.get_logger().info(
+        #     f"✓ 抓取点在相机坐标系的坐标: X={X_cam:.3f}m, Y={Y_cam:.3f}m, Z={Z_cam:.3f}m "
+        #     f"| 像素坐标: ({cx:.1f}, {cy:.1f})"
+        # )
         
         # 变换到目标基座坐标系
         coords_base = self.transform_point_to_target_frame(coords_3d)
@@ -1134,18 +1178,18 @@ class YoloGrabNode(Node):
             pose_stamped.pose.position.y = coords_base['Y']
             pose_stamped.pose.position.z = coords_base['Z']
             
-            self.get_logger().info(
-                f"✓ 抓取点在 ({coords_base['frame_id']}) 坐标系内的坐标: "
-                f"X={coords_base['X']:.3f}m, Y={coords_base['Y']:.3f}m, Z={coords_base['Z']:.3f}m"
-            )
+            # self.get_logger().info(
+            #     f"✓ 抓取点在 ({coords_base['frame_id']}) 坐标系内的坐标: "
+            #     f"X={coords_base['X']:.3f}m, Y={coords_base['Y']:.3f}m, Z={coords_base['Z']:.3f}m"
+            # )
         
-            # ============ IK解算（暂时注释，先不实际调用） ============
-            # 对抓取位姿进行逆运动学解算，获得关节角度
-            ik_result = self.compute_ik_for_grasp(pose_stamped, group_name="left_arm")
-            if ik_result['success']:
-                self.get_logger().info(f"✓ IK解算成功，关节数: {len(ik_result['joint_positions'])}")
-            else:
-                self.get_logger().warn(f"⚠ IK解算失败: {ik_result['error_message']}")
+            # ============ 异步 IK 解算 ============
+            # 不阻塞当前回调，异步处理 IK 结果
+            future_id = self.compute_ik_for_grasp(pose_stamped, group_name="left_arm")
+            # if future_id is not None:
+            #     self.get_logger().info(f"✓ 已提交 IK 请求（异步处理，future_id={future_id}）")
+            # else:
+            #     self.get_logger().warn(f"⚠ IK 请求提交失败")
         
         else:
             # 变换失败：降级到相机坐标系
@@ -1159,11 +1203,11 @@ class YoloGrabNode(Node):
             )
         
         self.pub.publish(pose_stamped)
-        self.get_logger().info(
-            f"✓ 已发布抓取点在 {pose_stamped.header.frame_id} 坐标系下的坐标 | "
-            f"检测到 {num_detections} 个物体"
-        )
-        self.get_logger().info("-" * 70)
+        # self.get_logger().info(
+        #     f"✓ 已发布抓取点在 {pose_stamped.header.frame_id} 坐标系下的坐标 | "
+        #     f"检测到 {num_detections} 个物体"
+        # )
+        # self.get_logger().info("-" * 70)
 
     def draw_depth_info_on_depth_image(self, img, center_x, center_y, depth_meters):
         """在深度图上绘制中心点标记和深度值
@@ -1377,7 +1421,7 @@ class YoloGrabNode(Node):
             self.draw_depth_label_on_color_image(annotated_img, center_x_int, center_y_int, depth_meters)
             
             # 输出日志
-            self.get_logger().info(f"{label} | 中心点: ({center_x_int}, {center_y_int}) | Depth raw={depth_value} | Depth={depth_meters:.3f}m")
+            # self.get_logger().info(f"{i}-{label} | 中心点: ({center_x_int}, {center_y_int}) | Depth raw={depth_value} | Depth={depth_meters:.3f}m")
 
         # ============ 保存标注后的图像 ============
         # 保存带标注的彩色图
