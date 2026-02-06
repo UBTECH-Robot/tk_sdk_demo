@@ -24,8 +24,6 @@ x11vnc -display "${DISPLAY}" -shared -nomodtweak -forever -capslock -repeat -xkb
 ./pkg/noVNC/utils/novnc_proxy --vnc localhost:5900 --listen 8080 --heartbeat 10 &
 
 export VGL_DISPLAY="egl"
-
 export VGL_REFRESHRATE="60"
-
-# vglrun +wm gnome-session &
-gnome-session &
+vglrun +wm gnome-session &
+# gnome-session &

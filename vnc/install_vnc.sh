@@ -406,7 +406,7 @@ configure_firewall() {
 install_vnc_server() {
     # Install Xvfb and x11vnc
     echo -e "${GREEN}=== 安装 Xvfb 和 x11vnc ===${NC}"
-    apt install xvfb x11vnc -y
+    apt install xvfb x11vnc mesa-utils -y
     echo -e "${GREEN}Xvfb 和 x11vnc 安装完成${NC}"
 
     # Extract and setup noVNC and websockify
