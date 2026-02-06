@@ -7,7 +7,7 @@ moveit_setup_assistant_config:
   package_settings:
     author_name: han.li
     author_email: han.li@ubtrobot.com
-    generated_timestamp: 1770193830
+    generated_timestamp: 1770371693
   control_xacro:
     command:
       - position

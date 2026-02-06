@@ -17,22 +17,10 @@
         <joint name="elbow_yaw_l_joint"/>
         <joint name="wrist_pitch_l_joint"/>
         <joint name="wrist_roll_l_joint"/>
+        <joint name="left_tcp_joint"/>
     </group>
     <group name="left_hand">
         <link name="left_tcp_link"/>
-        <link name="L_base_link"/>
-        <link name="left_index_1"/>
-        <link name="left_index_2"/>
-        <link name="left_little_1"/>
-        <link name="left_little_2"/>
-        <link name="left_middle_1"/>
-        <link name="left_middle_2"/>
-        <link name="left_ring_1"/>
-        <link name="left_ring_2"/>
-        <link name="left_thumb_1"/>
-        <link name="left_thumb_2"/>
-        <link name="left_thumb_3"/>
-        <link name="left_thumb_4"/>
     </group>
     <group name="right_arm">
         <joint name="shoulder_pitch_r_joint"/>
@@ -42,26 +30,14 @@
         <joint name="elbow_yaw_r_joint"/>
         <joint name="wrist_pitch_r_joint"/>
         <joint name="wrist_roll_r_joint"/>
+        <joint name="right_tcp_joint"/>
     </group>
     <group name="right_hand">
         <link name="right_tcp_link"/>
-        <link name="R_base_link"/>
-        <link name="right_index_1"/>
-        <link name="right_index_2"/>
-        <link name="right_little_1"/>
-        <link name="right_little_2"/>
-        <link name="right_middle_1"/>
-        <link name="right_middle_2"/>
-        <link name="right_ring_1"/>
-        <link name="right_ring_2"/>
-        <link name="right_thumb_1"/>
-        <link name="right_thumb_2"/>
-        <link name="right_thumb_3"/>
-        <link name="right_thumb_4"/>
     </group>
     <!--END EFFECTOR: Purpose: Represent information about an end effector.-->
-    <end_effector name="left_ee" parent_link="wrist_roll_l_link" group="left_hand" parent_group="left_arm"/>
-    <end_effector name="right_ee" parent_link="wrist_roll_r_link" group="right_hand" parent_group="right_arm"/>
+    <end_effector name="left_ee" parent_link="left_tcp_link" group="left_hand" parent_group="left_arm"/>
+    <end_effector name="right_ee" parent_link="right_tcp_link" group="right_hand" parent_group="right_arm"/>
     <!--VIRTUAL JOINT: Purpose: this element defines a virtual joint between a robot link and an external frame of reference (considered fixed with respect to the robot)-->
     <virtual_joint name="virtual_base" type="fixed" parent_frame="world" child_link="pelvis"/>
     <!--DISABLE COLLISIONS: By default it is assumed that any link of the robot could potentially come into collision with any other link in the robot. This tag disables collision checking between a specified pair of links. -->

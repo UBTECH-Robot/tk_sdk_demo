@@ -127,7 +127,11 @@ ros2 launch tiangong2pro_urdf display_with_hands.launch.py
 ros2 run moveit_setup_assistant moveit_setup_assistant
 
 启动 moveit2 服务：
+IK解算的服务：
 ros2 launch moveit2_config move_group.launch.py
+
+可视化：
 ros2 launch moveit2_config moveit_rviz.launch.py
+
 
 ros2 run grab_demo yolo_grab_node --target_classes apple
