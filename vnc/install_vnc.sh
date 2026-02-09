@@ -436,7 +436,7 @@ install_vnc_server() {
         echo -e "${RED}警告: 找不到 websockify-0.13.0.tar.gz${NC}"
     fi
 
-    install_turbovnc
+    # install_turbovnc
 }
 
 
