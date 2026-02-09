@@ -30,10 +30,10 @@
 | src/sdk_demo/sdk_demo/9_audio_player.py | 音频播放 | 见源码顶部 |
 | src/sdk_demo/sdk_demo/9_audio_saver.py | 音频保存 | 见源码顶部 |
 | src/sdk_demo/sdk_demo/9_audio_tts.py | 文本转语音 | 见源码顶部 |
-| src/sdk_demo/sdk_demo/10_depth_camera.py | 深度相机 | 见源码顶部 |
+| src/sdk_demo/sdk_demo/10_depth_camera.py | 深度相机数据读取 | 见源码顶部 |
 | src/sdk_demo/sdk_demo/11_hand_control.py | 手部控制 | 见源码顶部 |
-| src/sdk_demo/sdk_demo/11_hand_status.py | 手部状态 | `ros2 run sdk_demo hand_status` |
-| src/sdk_demo/sdk_demo/13_1_battery_status_demo.py | 电池状态 | `ros2 run sdk_demo battery_status_demo` |
+| src/sdk_demo/sdk_demo/11_hand_status.py | 手部状态获取 | `ros2 run sdk_demo hand_status` |
+| src/sdk_demo/sdk_demo/13_1_battery_status_demo.py | 电池状态获取 | `ros2 run sdk_demo battery_status_demo` |
 | src/sdk_demo/sdk_demo/13_2_power_board_status_demo.py | 电源板状态 | `ros2 run sdk_demo power_board_status_demo` |
 | src/sdk_demo/sdk_demo/13_3_stop_key_status_demo.py | 停止键状态 | `ros2 run sdk_demo stop_key_status_demo` |
 | src/sdk_demo/sdk_demo/14_sbus_event_demo.py | 遥控器SBUS事件 | `ros2 run sdk_demo sbus_event_demo` |
