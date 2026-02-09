@@ -285,7 +285,6 @@ restore_original_sources() {
     if [ -n "$BACKUP_FILE" ] && [ -f "$BACKUP_FILE" ]; then
         echo -e "${GREEN}恢复原始 APT 源...${NC}"
         cp "$BACKUP_FILE" /etc/apt/sources.list
-        apt-get update
         echo "已恢复原始源"
     fi
 }
