@@ -20,18 +20,18 @@
    查看头部相机（默认）:
      ros2 run sdk_demo depth_camera
      ros2 run sdk_demo depth_camera --camera head
-     实测在41.2上可同时用rqt_image_view查看图像与保存图片，在41.3上则rqt_image_view会无法查看头部相机图像，但图片仍会保存。
+     在41.2上可同时用rqt_image_view查看图像与保存图片"头部"相机画面
    
    查看腰部相机:
      ros2 run sdk_demo depth_camera --camera waist
-     实测在41.3上可同时用rqt_image_view查看图像与保存图片，在41.2上则rqt_image_view会无法查看腰部相机图像，但图片仍会保存。
+     在41.3上可同时用rqt_image_view查看图像与保存图片"腰部"相机画面
    
    查看背部相机:
      ros2 run sdk_demo depth_camera --camera back
-     实测在41.3上可同时用rqt_image_view查看图像与保存图片，在41.2上则rqt_image_view会无法查看背部相机图像，但图片仍会保存。
+     在41.3上可同时用rqt_image_view查看图像与保存图片"背部"相机画面
 
 3. 图片保存位置:
-   保存在源代码目录下的 10_depth_camera_imgs/ 文件夹中
+   保存在根目录下的 saved_data/10_depth_camera_imgs/ 文件夹中
 
 """
 
@@ -572,7 +572,7 @@ class DepthCameraNode(Node):
             
             # 保存为JPEG格式，质量95%
             combined.save(str(filepath), 'JPEG', quality=95)
-            self.get_logger().info(f'已保存: {filename}')
+            self.get_logger().info(f'已保存: {filepath}')
         except Exception as e:
             self.get_logger().error(f'保存失败: {e}')
     
