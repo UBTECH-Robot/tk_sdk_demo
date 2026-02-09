@@ -17,11 +17,11 @@ ASR 语音识别节点 (Automatic Speech Recognition Node)
     - /audio_asr/event (lyre_msgs/msg/AsrEvent) - 系统事件
     - 发布者: lyre (运行在 192.168.41.2)
 
-lyre 服务启动:
-    如果 lyre 服务未启动，可在 192.168.41.2 上执行:
-    cd /home/nvidia/lyre_ros2 && . install/setup.bash && ros2 launch lyre audio.launch.py
+使用方法(首先要确保 x86 板上的 proc_manager 服务已启动):
+    确保 lyre 服务启动:
+        如果 lyre 服务未启动，可在 192.168.41.2 上执行:
+        cd /home/nvidia/lyre_ros2 && . install/setup.bash && ros2 launch lyre audio.launch.py
 
-使用示例:
     # 配置环境变量（根据运行平台选择）
     # Orin 板
     source ~/lyre_ros2/install/setup.bash
@@ -31,12 +31,12 @@ lyre 服务启动:
     # 启动节点
     ros2 run sdk_demo audio_asr
     
-    # 节点会持续监听并输出识别结果
+    # 先唤醒天工(也就是在天工面前说出唤醒词"天工天工")，然后节点会持续监听并输出识别结果
 
 注意事项:
     - 需要先确保 lyre 服务已启动
     - 需要配置正确的环境变量
-    - 确保网络连接正常（192.168.41.2）
+    - 确保天工的所有主板(所有 Orin 板和 x86 板)都连接了公网，以便 lyre 服务能够正常工作
 """
 
 import rclpy

@@ -6,7 +6,7 @@
 功能说明：
     本脚演示了如何使用三种不同的控制模式来控制双臂电机的运动
     
-使用方法(要先确保机器人本体服务是启动着的)：
+使用方法(要先确保机器人是固定在移位机上，本体服务是启动着的，但是不能启动运控服务，也就是手动关掉 proc_manager 服务后再执行 ros2 launch body_control body.launch.py)：
     执行位置控制模式示例（默认）：
         ros2 run sdk_demo arm_motor_control pos
     
@@ -22,8 +22,7 @@
     仅右手挥手示例：
         ros2 run sdk_demo arm_motor_control wave
     
-    标零示例（实际应用中，标零接口必须配合标零工具使用！否则可能导致电机位置错误，影响机器人正常运行）：
-        ros2 run sdk_demo arm_motor_control zero
+    标零示例（标零接口必须配合标零工具使用！否则可能导致电机位置错误，影响机器人正常运行）：
 
 控制模式说明：
 

@@ -4,7 +4,7 @@
 ====================================
 
 提供了一个音频播放节点和内置的简单音频播放器，支持实时音频流播放和文件播放。
-仅支持播放脚本所在前系统的音频文件，不支持播放其他设备的音频，例如当前脚本在41.2，则要播放的音频文件也必须在41.2上。
+针对文件播放，仅支持播放脚本所在前系统的音频文件，不支持播放其他设备的音频，例如当前脚本在41.2，则要播放的音频文件也必须在41.2上。
 
 主要功能:
     1. 实时音频流播放：接收音频字节流并实时播放
@@ -26,7 +26,8 @@
     ros2 run sdk_demo audio_player
     
     # 使用ros命令发送音频路径（另一个终端），最好是绝对路径，如果是相对路径，则需要是相对于执行 ros2 run sdk_demo audio_player 命令的目录的相对路径
-    ros2 topic pub /audio_file_path std_msgs/String "data: '/home/nvidia/sdk_demo/saved_data/audio_files/audio_134758915.wav'" --once
+    # 对应的 .wav 和 .pcm 文件，可以先使用 ros2 run sdk_demo audio_saver 录制一些语音数据
+    ros2 topic pub /audio_file_path std_msgs/String "data: '/home/nvidia/sdk_demo/saved_data/audio_files/audio_113806860.wav'" --once
     ros2 topic pub /audio_file_path std_msgs/String "data: '/home/nvidia/sdk_demo/saved_data/audio_files/audio_134758915.pcm'" --once
 
 注意:
@@ -35,6 +36,7 @@
     - 节点退出时会自动释放音频资源
     - 播放格式: float32, 22050Hz, 单声道
     - 所有输入会自动转换为此格式
+    
     
 依赖项:
     - pyaudio: 音频播放库

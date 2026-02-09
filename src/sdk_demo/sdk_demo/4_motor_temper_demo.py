@@ -13,6 +13,10 @@
     - MOS芯片温度(mostemperature): float32类型，单位°C（MOS是电源管理芯片）
     
 使用方式：
+    0. 确保已编译并且 ROS2 环境已正确设置(只需要在修改代码后重新执行一次)
+      colcon build --packages-select sdk_demo
+      source ~/sdk_demo/install/setup.bash
+
     1. 订阅腰部电机状态（默认）：
        ros2 run sdk_demo motor_temper_demo
     

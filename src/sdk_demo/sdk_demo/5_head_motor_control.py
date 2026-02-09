@@ -6,7 +6,7 @@
 功能说明：
     本脚本演示了如何使用三种不同的控制模式来控制头部电机的运动
 
-使用方法(要先确保机器人本体服务是启动着的)：
+使用方法(要先确保机器人本体服务body_control是启动着的)：
     执行位置控制模式示例（默认）：
         ros2 run sdk_demo head_motor_control pos
     
@@ -22,8 +22,7 @@
     仅执行回零示例：
         ros2 run sdk_demo head_motor_control home
     
-    标零示例（实际应用中，标零接口必须配合标零工具使用！否则可能导致电机位置错误，影响机器人正常运行）：
-        ros2 run sdk_demo head_motor_control zero
+    标零示例（标零接口必须配合标零工具使用！否则可能导致电机位置错误，影响机器人正常运行）：
 
 控制模式说明：
 
@@ -622,7 +621,7 @@ class HeadMotorController(Node):
         self.get_logger().warn("")
         self.get_logger().warn("✓ 标零命令已发送")
         self.get_logger().warn("✓ 驱动器现在应该在处理标零请求...")
-        self.get_logger().warn("✓ 请等待驱动器完成标零并手动重启 proc_manager 服务")
+        self.get_logger().warn("✓ 请等待驱动器完成标零并手动重启 proc_manager 服务(如果是仅启动body_control服务的话则直接重启body_control服务)")
         
         time.sleep(2)
 

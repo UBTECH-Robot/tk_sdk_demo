@@ -15,6 +15,14 @@ IMU 传感器应用场景：
   - 运动跟踪和惯性导航
   - 防摔检测
   - 游戏控制器输入
+
+使用方式：
+  0. 确保已编译并且 ROS2 环境已正确设置(只需要在修改代码后重新执行一次)
+      colcon build --packages-select sdk_demo
+      source ~/sdk_demo/install/setup.bash
+
+  1. 运行本程序，观察终端输出的 IMU 数据：
+      ros2 run sdk_demo imu_demo
 """
 
 import rclpy
@@ -148,6 +156,7 @@ class ImuSubscriber(Node):
             f'   y={linear_accel.y:.4f}（左右）\n'
             f'   z={linear_accel.z:.4f}（上下，包含重力）\n'
         )
+        print('---' * 30)
 
 def main(args=None):
     """

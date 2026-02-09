@@ -9,7 +9,7 @@
     - 31: -170度到+170度
     运动超过范围则电机会断开连接，无法再被控制，可手动将电机复位到合理位置后重启机器人本体服务(注意确保重启时机器人是安全固定在移位机上的)
 
-使用方法(要先确保机器人本体服务是启动着的，但是不能启动运控服务，也就是手动关掉 proc_manager 服务后再执行 ros2 launch body_control body.launch.py)：
+使用方法(要先确保机器人是固定在移位机上，本体服务是启动着的，但是不能启动运控服务，也就是手动关掉 proc_manager 服务后再执行 ros2 launch body_control body.launch.py)：
     执行位置控制模式示例（默认）：
         ros2 run sdk_demo waist_motor_control pos
     
@@ -25,8 +25,7 @@
     仅执行回零示例：
         ros2 run sdk_demo waist_motor_control home
     
-    标零示例（实际应用中，标零接口必须配合标零工具使用！否则可能导致电机位置错误，影响机器人正常运行）：
-        ros2 run sdk_demo waist_motor_control zero
+    标零示例（标零接口必须配合标零工具使用！否则可能导致电机位置错误，影响机器人正常运行）：
 
 控制模式说明：
 

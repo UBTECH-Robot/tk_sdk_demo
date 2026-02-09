@@ -7,20 +7,17 @@
 并将其保存为PCM和WAV格式文件。
 
 使用方法：
-    1. 基础启动（不保存音频）：
+    1. 启动音频保存节点：
        ros2 run sdk_demo audio_saver
     
-    2. 启用音频保存功能：
-       ros2 run sdk_demo audio_saver --ros-args -p save_audio:=true
-    
-    3. 编译命令：
+    2. 编译命令：
        colcon build
        source install/setup.bash
 
-    4. 播放保存的PCM文件（Linux系统）：
-       aplay -f S16_LE -r 16000 -c 1 audio_134758915.pcm
+    3. 播放保存的PCM文件（Linux系统）：
+       cd ~/sdk_demo/saved_data/audio_files && aplay -f S16_LE -r 16000 -c 1 audio_113806860.pcm
 
-    5. 调整音量：
+    4. 调整音量：
        # 音量调整到100%
        amixer set Speaker 100%
        
@@ -33,6 +30,7 @@
     - rclpy: ROS2 Python客户端库
     - wave: 音频文件处理
     - socket: 网络通信
+
 """
 
 import os
@@ -103,10 +101,6 @@ class SocketAudioSaver(Node):
         - 支持多线程并发接收和保存
         - 音频保存为PCM和WAV两种格式
     
-    参数：
-        save_audio (bool, default=False): 是否启用音频保存功能
-                                         通过ROS参数设置：-p save_audio:=true
-    
     属性：
         audio_provider (SocketAudioProvider): socket音频提供者
         audio_queue (Queue): 存储待保存音频的队列
@@ -119,10 +113,6 @@ class SocketAudioSaver(Node):
     def __init__(self):        
         super().__init__('audio_saver')
         
-        # 声明ROS参数：save_audio
-        self.declare_parameter('save_audio', False)
-        self.save_audio = self.get_parameter('save_audio').get_parameter_value().bool_value
-
         # 初始化socket音频提供者（连接到本地服务）
         self.audio_provider = SocketAudioProvider('10.42.0.127', 9080)
         
@@ -148,20 +138,14 @@ class SocketAudioSaver(Node):
         # 音频缓冲区：用于临时存储VAD状态为1、2、3的音频数据
         self.audio_buffer = bytearray()
         
-        if self.save_audio:
-            # 启用音频保存：创建队列和保存线程
-            self.audio_queue = Queue()
-            # 清理旧的音频文件
-            self.clear_old_files()
-            # 启动音频保存线程
-            self.saving_thread = threading.Thread(target=self.keep_saving_wav_pcm_file)
-            self.saving_thread.start()
-            self.get_logger().info(f"音频保存功能已启用，音频文件将保存在{self.audio_files_dir}目录下")
-        else:
-            # 未启用保存功能
-            self.audio_queue = None
-            self.saving_thread = None
-            self.get_logger().info(f"音频保存功能未启用，使用 ros2 run sdk_demo audio_saver --ros-args -p save_audio:=true 命令可启用音频保存功能")
+        # 启用音频保存：创建队列和保存线程
+        self.audio_queue = Queue()
+        # 清理旧的音频文件
+        self.clear_old_files()
+        # 启动音频保存线程
+        self.saving_thread = threading.Thread(target=self.keep_saving_wav_pcm_file)
+        self.saving_thread.start()
+        self.get_logger().info(f"音频保存功能已启用，音频文件将保存在{self.audio_files_dir}目录下")
 
         # 启动音频接收线程（总是运行）
         self.receive_pub_thread = threading.Thread(target=self.keep_receiving_publish_audio)
@@ -299,7 +283,7 @@ class SocketAudioSaver(Node):
             5. 超时或异常时继续循环
         
         说明：
-            - 此方法在save_audio参数为True时由__init__启动
+            - 此方法在__init__中启动
             - 通过stop_event.set()可优雅停止此线程
         """
         while not self.stop_event.is_set():
@@ -364,7 +348,6 @@ class SocketAudioSaver(Node):
             2. 检查VAD状态
             3. 根据VAD状态更新audio_buffer
             4. 当VAD=3时，将完整的句子音频提交保存队列
-            5. 若save_audio为False，仅接收不保存
         
         说明：
             - 此线程在节点初始化时始终启动
@@ -389,7 +372,7 @@ class SocketAudioSaver(Node):
                 # 结束说话：添加最后数据并提交保存
                 self.audio_buffer.extend(audio_data)
                 sentence_audio_data = bytes(self.audio_buffer)
-                if self.save_audio and self.audio_queue is not None:
+                if self.audio_queue is not None:
                     # 将完整的句子音频提交到保存队列
                     self.audio_queue.put(sentence_audio_data)
                 self.get_logger().debug("结束说话")
@@ -407,7 +390,7 @@ def main(args=None):
         - 处理异常并确保清理资源
     
     使用方法：
-        ros2 run sdk_demo audio_saver --ros-args -p save_audio:=true
+        ros2 run sdk_demo audio_saver
     
     优雅关闭：
         - 按Ctrl+C可安全停止节点

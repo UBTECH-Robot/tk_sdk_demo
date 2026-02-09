@@ -7,7 +7,7 @@
     本脚本用于订阅并实时显示机器人各关节电机的状态信息
     可以监控以下关节的电机状态：腰部(waist)、手臂(arm)、腿部(leg)、头部(head)
     
-使用方式：
+使用方法(要先确保机器人本体服务body_control是启动着的)：
     1. 订阅腰部电机状态（默认）：
        ros2 run sdk_demo motor_status_demo
     

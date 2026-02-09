@@ -16,6 +16,14 @@ IMU消息包含以下信息：
     - euler: 欧拉角（roll, pitch, yaw），单位：弧度
     - error: 错误代码
     - 各种协方差数据
+
+使用方式：
+  0. 确保已编译并且 ROS2 环境已正确设置(只需要在修改代码后重新执行一次)
+      colcon build --packages-select sdk_demo
+      source ~/sdk_demo/install/setup.bash
+
+  1. 运行本程序，观察终端输出的自定义的 IMU 数据：
+      ros2 run sdk_demo imu_status_demo
 """
 
 import rclpy
@@ -114,6 +122,8 @@ class ImuStatusSubscriber(Node):
         
         # 线性加速度协方差：表示加速度测量的不确定性
         self.get_logger().info(f'线性加速度协方差: {list(msg.linear_acceleration_covariance)}\n')
+
+        print('---' * 30)
 
 
 def main(args=None):
