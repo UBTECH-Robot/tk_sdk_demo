@@ -4,4 +4,12 @@
 
 # 使用方法
 
+将本项目放到 x86 或者 orin 的根目录，
+
+进入项目根目录，例如`/home/nvidia/tk_sdk_demo`
+
+执行 `colcon build` 进行构建
+
+执行 `source install.bash` 设置环境变量
+
 每一个示例代码都使用 `ros run sdk_demo xxx` 来运行，详细的可参考每个源码文件顶部的说明，都列出了详细的运行命令及注意事项的。
