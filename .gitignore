@@ -10,3 +10,4 @@ saved_data/
 *.pdf
 noVNC
 moveit2_config_bak
+*.log
