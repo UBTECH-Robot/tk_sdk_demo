@@ -22,7 +22,7 @@
     仅右手挥手示例：
         ros2 run sdk_demo arm_motor_control wave
     
-    标零示例（标零接口必须配合标零工具使用！否则可能导致电机位置错误，影响机器人正常运行）：
+    标零示例（标零接口必须配合标零工具使用！否则可能导致电机位置错误，影响机器人正常运行），没有标零工具就不要随意尝试此方法，很危险！
 
 控制模式说明：
 
@@ -119,6 +119,7 @@ wave_right_arm_motor_pos_list = [
 # arm_MOTOR_IDS = [11, 12, 13, 14, 15, 16, 17]
 # arm_MOTOR_IDS = [21, 22, 23, 24, 25, 26, 27]
 arm_MOTOR_IDS = [11, 12, 13, 14, 15, 16, 17, 21, 22, 23, 24, 25, 26, 27]
+# arm_MOTOR_IDS = [26, 27]
 # arm_MOTOR_IDS = [11, 12, 13, 14, 15, 16]
 
 import math
@@ -678,7 +679,7 @@ class ArmMotorController(Node):
         """
         标零方法 - 将指定关节的当前位置设置为零位
         
-        ⚠️ 重要提示：此接口必须配合标零工具使用！否则可能导致电机位置错误，影响机器人正常运行。
+        ⚠️ 重要提示：此接口必须配合标零工具使用！否则可能导致电机位置错误，影响机器人正常运行。没有标零工具就不要随意尝试此方法，很危险！
         
         功能说明：
             标零的作用是将指定关节的当前物理位置记录为该关节的零位参考点
@@ -717,6 +718,16 @@ class ArmMotorController(Node):
         self.get_logger().warn("⚠️  3. 周围没有人员")
         self.get_logger().warn("⚠️  4. 所有其他控制程序已停止")
         self.get_logger().warn("")
+
+        joint_ids = ", ".join(str(motor_id) for motor_id in arm_MOTOR_IDS)
+        user_input = input(f"请确认机器人关节[{joint_ids}]是否真的在零位，标零操作会将这些关节当前位置设置为零位，是否继续？(y/n)：").strip().lower()
+        
+        # 检查用户输入
+        if user_input in ['是', 'yes', 'y', '1', 'ok', 'continue']:
+            self.get_logger().info("✓ 用户确认，开始执行...")
+        else:
+            self.get_logger().warn("✗ 用户否定，取消执行")
+            return
         
         # 创建消息头
         header = self.create_header()
@@ -739,7 +750,7 @@ class ArmMotorController(Node):
         self.get_logger().warn("")
         self.get_logger().warn("✓ 标零命令已发送")
         self.get_logger().warn("✓ 驱动器现在应该在处理标零请求...")
-        self.get_logger().warn("✓ 请等待驱动器完成标零并手动重启 proc_manager 服务")
+        self.get_logger().warn("✓ 请等待驱动器完成标零并手动重启 proc_manager 服务或直接断电重启机器人")
         
         time.sleep(2)
 
@@ -859,13 +870,15 @@ def main(args=None):
             controller.velocity_control_mode()
         
         elif mode == "zero":
-            controller.homing()  # 这里只是示例，所以先回零，确保所有关节都在零位
-            time.sleep(3)
-            controller.homing()  # 这里只是示例，所以先回零，确保所有关节都在零位
-            time.sleep(3)
-            controller.homing()  # 再次确认在零位
-            # 执行标零
-            controller.set_zero()
+            # controller.homing()  # 这里只是示例，所以先回零，确保所有关节都在零位
+            # time.sleep(3)
+            # controller.homing()  # 这里只是示例，所以先回零，确保所有关节都在零位
+            # time.sleep(3)
+            # controller.homing() # 再次确保所有关节都在零位
+            # 执行标零，没有标零工具就不要随意尝试此方法，很危险！
+            # controller.set_zero()
+            controller.get_logger().info("默认忽略标零命令，如果你确定要标零，可在理解代码和标零含义的基础上按需要取消上述几行的注释后再编译运行此脚本")
+            pass
         
         # 完成提示
         controller.get_logger().info("")
