@@ -353,7 +353,7 @@ check_and_install_desktop() {
                 echo -e "${GREEN}安装 GNOME 桌面环境...${NC}"
                 echo -e "${YELLOW}注意: GNOME 较重，VNC 性能可能不如 XFCE${NC}"
                 DEBIAN_FRONTEND=noninteractive apt-get install -y \
-                    ubuntu-desktop \
+                    ubuntu-desktop-minimal \
                     gnome-session \
                     gnome-terminal
                 
