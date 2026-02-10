@@ -1,0 +1,104 @@
+#!/bin/bash
+
+###############################################################################
+# TurboVNC xstartup Script for GNOME Desktop Environment
+# Location: ~/.vnc/xstartup
+# Usage: Executed by TurboVNC vncserver when starting
+###############################################################################
+
+set -e
+
+# Log file for debugging
+LOG_FILE="$HOME/.vnc/xstartup.log"
+
+# Function to log messages
+log_msg() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+}
+
+log_msg "=== xstartup script started ==="
+log_msg "User: $(whoami)"
+log_msg "Home: $HOME"
+log_msg "Display: $DISPLAY"
+
+# Clean up environment
+unset SESSION_MANAGER
+unset DBUS_SESSION_BUS_ADDRESS
+
+# Set up environment variables
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
+export XDG_SESSION_TYPE=x11
+export GDK_BACKEND=x11
+export QT_QPA_PLATFORM=xcb
+
+log_msg "Environment variables set"
+
+# Start D-Bus session (required for GNOME)
+log_msg "Starting D-Bus session..."
+if [ -z "$DBUS_SESSION_BUS_ADDRESS" ]; then
+    eval $(dbus-launch --sh-syntax) >> "$LOG_FILE" 2>&1
+    log_msg "D-Bus session started: $DBUS_SESSION_BUS_ADDRESS"
+else
+    log_msg "D-Bus session already running: $DBUS_SESSION_BUS_ADDRESS"
+fi
+
+export DBUS_SESSION_BUS_ADDRESS
+export DBUS_SESSION_BUS_PID
+
+# Start X window manager
+log_msg "Starting window manager..."
+if command -v mutter &> /dev/null; then
+    log_msg "Starting mutter (GNOME window manager)..."
+    mutter --replace >> "$LOG_FILE" 2>&1 &
+    sleep 1
+elif command -v openbox &> /dev/null; then
+    log_msg "Starting openbox..."
+    openbox --replace >> "$LOG_FILE" 2>&1 &
+    sleep 1
+elif command -v xfwm4 &> /dev/null; then
+    log_msg "Starting xfwm4 (XFCE window manager)..."
+    xfwm4 --replace >> "$LOG_FILE" 2>&1 &
+    sleep 1
+else
+    log_msg "WARNING: No window manager found"
+fi
+
+# Start GNOME session
+log_msg "Starting GNOME session..."
+if command -v gnome-session &> /dev/null; then
+    export XDG_SESSION_TYPE=x11
+    export XDG_SESSION_CLASS=user
+    export XDG_CURRENT_DESKTOP=GNOME
+    
+    # Start GNOME with X11 backend (not Wayland)
+    gnome-session --session=gnome --builtin >> "$LOG_FILE" 2>&1 &
+    GNOME_PID=$!
+    log_msg "GNOME session started with PID: $GNOME_PID"
+    
+    # Wait for GNOME to initialize
+    sleep 3
+else
+    log_msg "WARNING: gnome-session not found, trying gnome-session-classic"
+    if command -v gnome-session &> /dev/null; then
+        gnome-session --session=gnome-classic >> "$LOG_FILE" 2>&1 &
+        log_msg "GNOME classic started"
+    else
+        log_msg "ERROR: gnome-session not available"
+    fi
+fi
+
+# Start compositor for better rendering
+if command -v xcompmgr &> /dev/null; then
+    log_msg "Starting xcompmgr for compositing..."
+    xcompmgr -a -c >> "$LOG_FILE" 2>&1 &
+    sleep 1
+fi
+
+log_msg "=== xstartup script completed successfully ==="
+log_msg "Desktop is ready for VNC connections"
+
+# Keep the script running (don't exit)
+# This allows VNC server to maintain the display
+wait
