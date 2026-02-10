@@ -198,6 +198,7 @@ echo "            ${IP_ADDR}:${VNC_PORT}"
 echo ""
 echo "分辨率: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}"
 echo "x11vnc 日志: /tmp/x11vnc.log"
+echo "若无权限，请停止服务后执行 sudo usermod -aG vglusers \$USER 添加当前用户到 vglusers 组，然后重新启动服务。"
 echo "=========================================="
 echo ""
 
