@@ -8,7 +8,7 @@ DISPLAY=":99"
 SCREEN_WIDTH="1920"
 SCREEN_HEIGHT="1080"
 VNC_PORT="5900"
-NOVNC_PORT="8080"
+NOVNC_PORT="8888"
 
 echo "========================================"
 echo "VNC服务启动 (虚拟桌面模式)"
