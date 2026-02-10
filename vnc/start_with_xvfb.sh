@@ -75,7 +75,7 @@ x11vnc -display "${DISPLAY}" \
     -rfbport ${VNC_PORT} \
     -noshm \
     -sb 10000 \
-    -logfile /tmp/x11vnc.log &
+    -logfile ./x11vnc.log &
 
 X11VNC_PID=$!
 echo "x11vnc PID: ${X11VNC_PID}"
@@ -84,7 +84,7 @@ sleep 2
 
 if ! kill -0 ${X11VNC_PID} 2>/dev/null; then
     echo "错误: x11vnc启动失败"
-    cat /tmp/x11vnc.log
+    cat ./x11vnc.log
     exit 1
 fi
 
@@ -197,7 +197,7 @@ echo "VNC直连地址: localhost:${VNC_PORT}"
 echo "            ${IP_ADDR}:${VNC_PORT}"
 echo ""
 echo "分辨率: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}"
-echo "x11vnc 日志: /tmp/x11vnc.log"
+echo "x11vnc 日志: ./x11vnc.log"
 echo "若无权限，请停止服务后执行 sudo usermod -aG vglusers \$USER 添加当前用户到 vglusers 组，然后重新启动服务。"
 echo "=========================================="
 echo ""
