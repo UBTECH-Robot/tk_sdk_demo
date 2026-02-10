@@ -79,13 +79,21 @@ cleanup() {
     # 检查 Xvfb
     if pgrep -f "Xvfb.*${DISPLAY_NUM}" &>/dev/null; then
         echo -e "${YELLOW}  发现遗留的 Xvfb 进程，清理...${NC}"
-        pkill -f "Xvfb.*${DISPLAY_NUM}" || true
+        if pkill -f "Xvfb.*${DISPLAY_NUM}" 2>/dev/null; then
+            echo -e "${GREEN}    ✓ Xvfb 已清理${NC}"
+        fi
     fi
     
-    # 检查 gnome-session
-    if DISPLAY="$DISPLAY_NUM" pgrep -u "$USER" -f "gnome-session" &>/dev/null; then
-        echo -e "${YELLOW}  发现遗留的 GNOME 进程，清理...${NC}"
-        DISPLAY="$DISPLAY_NUM" pkill -f "gnome-session" || true
+    # 检查 gnome-session（无需权限验证，只是清理可访问的进程）
+    GNOME_PIDS=$(pgrep -f "gnome-session.*${DISPLAY_NUM}" 2>/dev/null || true)
+    if [ -n "$GNOME_PIDS" ]; then
+        echo -e "${YELLOW}  发现遗留的 GNOME 进程...${NC}"
+        # 尝试以用户身份杀死这些进程
+        for PID in $GNOME_PIDS; do
+            if kill -TERM "$PID" 2>/dev/null; then
+                echo -e "${GREEN}    ✓ 已清理 PID $PID${NC}"
+            fi
+        done
     fi
     
     # 最终验证
@@ -259,6 +267,26 @@ echo -e "${CYAN}服务运行中... (Ctrl+C 停止)${NC}"
 echo -e "${CYAN}==========================================${NC}"
 echo ""
 
-# 等待任意退出信号
-# cleanup 函数会在捕获 SIGINT/SIGTERM 时自动执行
-wait $TURBOVNC_PID $NOVNC_PID 2>/dev/null || true
+# 持续运行脚本，直到接收到 Ctrl+C
+# 定期检查进程是否仍在运行
+while true; do
+    # 检查 TurboVNC 进程状态
+    if ! kill -0 "$TURBOVNC_PID" 2>/dev/null; then
+        echo -e "${RED}错误: TurboVNC 进程已退出${NC}"
+        echo "请检查日志: tail ~/.vnc/xstartup.log"
+        sleep 5
+        # 等待用户中断，cleanup 函数会执行
+        continue
+    fi
+    
+    # 检查 noVNC 进程状态
+    if ! kill -0 "$NOVNC_PID" 2>/dev/null; then
+        echo -e "${RED}错误: noVNC 进程已退出${NC}"
+        sleep 5
+        # 等待用户中断，cleanup 函数会执行
+        continue
+    fi
+    
+    # 两个进程都在运行，等待 1 秒后再检查
+    sleep 1
+done
