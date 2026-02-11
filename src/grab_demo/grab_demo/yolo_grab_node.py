@@ -23,6 +23,8 @@ from bodyctrl_msgs.msg import (
     CmdSetMotorSpeed, SetMotorSpeed
 )
 from std_msgs.msg import Header, String
+import threading
+from queue import Queue
 
 # ros2 run grab_demo yolo_grab_node --target_classes apple
 # 由于使用 ApproximateTimeSynchronizer 对彩色图和深度图进行帧同步处理，所以只推荐运行在41.2的orin板上（也就是头部相机所连接的板）。
@@ -60,6 +62,7 @@ class YoloGrabNode(Node):
         self._init_camera_parameters()       # 相机参数初始化
         self._init_tf_transforms()           # TF2 坐标系变换配置
         self._init_moveit_ik_service()       # MoveIt2 IK服务配置
+        self._init_ik_result_pause_control() # IK结果确认与暂停控制初始化
 
     def _init_head_pose(self):
         self.head_pos_cmd_publisher = self.create_publisher(CmdSetMotorPosition, '/head/cmd_pos', 10)
@@ -348,6 +351,53 @@ class YoloGrabNode(Node):
         
         self.get_logger().info(f"相机光学坐标系: {self.ob_camera_frame}")
         self.get_logger().info(f"目标基座坐标系: {self.target_frame}")
+    
+    def _init_ik_result_pause_control(self):
+        """初始化 IK 结果暂停控制相关的变量和锁
+        
+        当 IK 解算成功后，暂停 synchronized_image_cb 回调接收新的图片，
+        在命令行提示用户解算结果，并询问是否执行抓取。
+        
+        使用线程安全的机制：
+        - 使用线程锁（threading.Lock）保护共享变量
+        - 使用队列（Queue）在线程间传递用户输入结果
+        - 后台线程等待用户输入，主线程继续处理ROS事件
+        
+        相关变量说明：
+        - pause_image_processing: 标志位，True表示暂停image_cb，False表示继续
+        - ik_result_lock: 线程锁，保护与IK结果相关的共享变量
+        - ik_result_queue: 队列，用于后台线程向主线程传递用户选择
+        - ik_result_data: 存储当前成功的IK解算结果（关节角度、时间戳等）
+        """
+        # ============ 暂停标志 ============
+        # 当IK解算成功时设为True，暂停synchronized_image_cb接收新图片
+        # 用户确认后设为False，恢复正常的图像处理
+        self.pause_image_processing = False
+        
+        # ============ 线程同步机制 ============
+        # 保护 pause_image_processing 和 ik_result_data 的访问
+        # 防止多线程竞态条件
+        self.ik_result_lock = threading.Lock()
+        
+        # ============ 用户输入队列 ============
+        # 后台线程（等待用户输入）通过这个队列向主线程传递用户选择
+        # 队列元素为字典：{'user_choice': 'yes'/'no', 'timestamp': ...}
+        self.ik_result_queue = Queue(maxsize=1)
+        
+        # ============ 存储当前的IK解算结果 ============
+        # 仅当IK解算成功且暂停时才会被设置
+        # 结构：{
+        #   'joint_state': RobotState.joint_state,
+        #   'group_name': str,
+        #   'pose_stamped': PoseStamped,
+        #   'timestamp': float (time.time()),
+        #   'elapsed_time': float (ms)
+        # }
+        self.ik_result_data = None
+        
+        # ============ 后台输入线程相关 ============
+        # 用户输入线程对象
+        self.user_input_thread = None
 
     def _init_moveit_ik_service(self):
         """初始化 MoveIt2 IK服务配置
@@ -1187,7 +1237,6 @@ class YoloGrabNode(Node):
             # self.get_logger().info(f"发送异步 IK 请求: group={group_name}, frame={target_pose_stamped.header.frame_id}")
             
             # 异步调用 - 不阻塞，直接返回 future
-            import time
             future = self.ik_client.call_async(request)
             
             # 为 future 添加完成回调
@@ -1209,15 +1258,26 @@ class YoloGrabNode(Node):
             return None
     
     def _ik_done_callback(self, future_id):
-        """IK 服务异步完成回调
+        """IK 服务异步完成回调 - 在IK解算成功时暂停图像处理并等待用户确认
         
-        在回调中处理 IK 结果，不阻塞主事件循环
+        工作流程：
+        1. IK解算完成，检查是否成功
+        2. 若成功：
+           a. 保存解算结果数据
+           b. 设置暂停标志，停止 synchronized_image_cb 接收新图片
+           c. 启动后台线程等待用户在命令行的输入
+           d. 用户输入后恢复图像处理
+        3. 若失败：直接输出错误信息，继续正常的图像处理
+        
+        设计说明：
+        - 使用后台线程避免用户输入阻塞ROS2事件循环
+        - 使用线程锁和队列实现线程间的安全通信
+        - 用户选择通过队列传递，最小化锁的持时间
         """
         if future_id not in self.pending_ik_futures:
             return
         
         try:
-            import time
             future_data = self.pending_ik_futures.pop(future_id)
             future = future_data['future']
             group_name = future_data['group_name']
@@ -1229,8 +1289,10 @@ class YoloGrabNode(Node):
             response = future.result()
             error_code = response.error_code.val
             
-            if error_code == 1:  # SUCCESS
+            if error_code == 1:  # SUCCESS - IK解算成功
                 joint_state = response.solution.joint_state
+                
+                # ============ 打印IK解算结果 ============
                 self.get_logger().info("=" * 70)
                 self.get_logger().info(f"✓ IK解算成功 (group: {group_name})")
                 self.get_logger().info(f"解算耗时: {elapsed_time*1000:.2f}ms")
@@ -1243,7 +1305,42 @@ class YoloGrabNode(Node):
                         self.get_logger().info(f"  {name}: {pos:.4f} rad ({np.degrees(pos):.2f}°)")
                 
                 self.get_logger().info("=" * 70)
+                
+                # ============ 保存IK结果并暂停图像处理 ============
+                # 使用线程锁保护共享变量的访问，避免竞态条件
+                with self.ik_result_lock:
+                    # 保存当前的IK解算结果数据
+                    # 这些数据将用于后续的用户确认和执行
+                    self.ik_result_data = {
+                        'joint_state': joint_state,
+                        'group_name': group_name,
+                        'pose_stamped': future_data['pose'],
+                        'timestamp': time.time(),
+                        'elapsed_time': elapsed_time,
+                        'error_code': error_code
+                    }
+                    
+                    # 设置暂停标志：True表示暂停synchronized_image_cb接收新图片
+                    self.pause_image_processing = True
+                
+                # ============ 启动后台线程等待用户输入 ============
+                # 在后台线程中等待用户输入，避免阻塞ROS2事件循环
+                # 如果上一个输入线程还在运行，先等待其完成（避免多个线程竞争）
+                if self.user_input_thread is not None and self.user_input_thread.is_alive():
+                    self.user_input_thread.join(timeout=0.5)  # 最多等待0.5秒
+                
+                # 创建新的后台线程来处理用户输入
+                # daemon=False 使得线程是守护线程，不会阻止程序退出
+                self.user_input_thread = threading.Thread(
+                    target=self._wait_for_user_confirmation,
+                    args=(joint_state, group_name),
+                    daemon=False
+                )
+                self.user_input_thread.start()
+                
             else:
+                # ============ IK解算失败处理 ============
+                # 解算失败时直接输出错误信息，不暂停图像处理
                 error_messages = {
                     -1: "解算失败",
                     -2: "超时",
@@ -1254,10 +1351,353 @@ class YoloGrabNode(Node):
                 
         except Exception as e:
             self.get_logger().error(f"IK 完成回调异常: {str(e)}")
+            import traceback
+            traceback.print_exc()
         finally:
             # 清理引用
             if future_id in self.pending_ik_futures:
                 del self.pending_ik_futures[future_id]
+    
+    def _wait_for_user_confirmation(self, joint_state, group_name):
+        """后台线程主方法：管理整个抓取-放置流程
+        
+        这个方法运行在独立的后台线程中，不会阻塞ROS2的主事件循环。
+        在整个过程中，pause_image_processing 保持为 True，确保图像处理暂停。
+        
+        完整的工作流程：
+        1. 显示IK解算结果
+        2. 询问用户是否执行抓取
+           ├─ 如果是：执行整个抓取-放置流程
+           │         ├─ 控制机械臂执行抓取动作
+           │         ├─ 询问用户选择放置位置
+           │         └─ 控制机械臂运动到放置位置
+           └─ 如果否：跳过抓取流程，直接继续
+        3. 等待用户按 Enter 键继续
+        4. 恢复图像处理
+        
+        Args:
+            joint_state (JointState): IK解算得到的关节状态
+            group_name (str): 规划组名称（如 'left_arm'）
+        
+        注意：整个过程中都保持图像处理暂停状态（pause_image_processing=True），
+             只有在流程完全结束后才会恢复。
+        """
+        try:
+            # ============ 阶段0：显示IK解算结果 ============
+            self._display_ik_results(joint_state, group_name)
+            
+            # ============ 阶段1：询问用户是否执行抓取 ============
+            user_execute_grasp = self._prompt_execute_grasp()
+            
+            # ============ 阶段2：根据用户选择执行相应流程 ============
+            if user_execute_grasp:
+                # 用户选择执行抓取，执行整个抓取-放置流程
+                self._execute_grasp_and_place_sequence(joint_state, group_name)
+            else:
+                # 用户选择放弃本次抓取
+                print("=" * 80)
+                print("✗ 用户选择: 放弃本次抓取 ✗")
+                print("-" * 80)
+                print("图像处理将在用户确认后恢复...")
+                print("=" * 80)
+                print("\n")
+            
+            # ============ 阶段3：等待用户确认继续 ============
+            self._wait_for_user_continue()
+            
+            # ============ 阶段4：恢复图像处理 ============
+            self._resume_image_processing()
+            
+        except Exception as e:
+            self.get_logger().error(f"用户输入线程异常: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            # 异常发生时也要恢复图像处理，避免死锁
+            self._resume_image_processing()
+    
+    def _display_ik_results(self, joint_state, group_name):
+        """显示IK解算结果详情
+        
+        在命令行输出IK解算的关键信息，便于用户查看
+        
+        Args:
+            joint_state (JointState): IK解算得到的关节状态
+            group_name (str): 规划组名称（如 'left_arm'）
+        """
+        print("\n")
+        print("=" * 80)
+        print("【IK解算结果已就绪】")
+        print("=" * 80)
+        print("✓ 上面已显示IK解算的关节角度结果")
+        print(f"  规划组: {group_name}")
+        print(f"  关节数: {len(joint_state.name)}")
+        print("-" * 80)
+    
+    def _prompt_execute_grasp(self):
+        """询问用户是否执行抓取
+        
+        通过命令行循环询问用户，直到得到有效的选择（是/否）
+        
+        Returns:
+            bool: True 表示用户同意执行抓取，False 表示放弃
+        """
+        user_choice = None
+        while user_choice not in ['yes', 'no']:
+            # 提示用户输入
+            user_input = input(
+                "\n是否使用该解算结果执行抓取？\n"
+                "  输入 'yes'/'y' 以执行抓取动作\n"
+                "  输入 'no'/'n' 以放弃本次抓取，继续检测下一个物体\n"
+                "请选择 (yes/no): "
+            ).strip().lower()
+            
+            # 规范化用户输入
+            if user_input in ['yes', 'y']:
+                user_choice = 'yes'
+            elif user_input in ['no', 'n']:
+                user_choice = 'no'
+            else:
+                # 无效输入，提示重新输入
+                print("✗ 无效的输入，请输入 'yes'/'y' 或 'no'/'n'")
+        
+        return user_choice == 'yes'
+    
+    def _execute_grasp_and_place_sequence(self, joint_state, group_name):
+        """执行整个抓取和放置的流程
+        
+        包括三个主要步骤：
+        1. 执行机械臂抓取动作（使用IK解算结果）
+        2. 询问用户选择物体放置位置
+        3. 控制机械臂运动到选定的放置位置
+        
+        整个过程中保持暂停图像处理（pause_image_processing=True）
+        
+        Args:
+            joint_state (JointState): IK解算得到的关节状态，包含抓取位置的关节角度
+            group_name (str): 规划组名称（如 'left_arm'）
+        
+        设计说明：
+        - 每个步骤间隔2秒，给用户时间观察输出
+        - 预留了 TODO 注释位置，用于后续添加具体的机械臂控制代码
+        - 使用关键的状态标志和提示信息，便于调试和扩展
+        """
+        try:
+            print("\n")
+            print("=" * 80)
+            print("【开始执行抓取-放置流程】")
+            print("=" * 80)
+            print("✓ 用户选择: 执行抓取 ✓")
+            print("-" * 80)
+            
+            # ============ 第1步：执行机械臂抓取动作 ============
+            print("\n[步骤 1/3] 执行机械臂抓取动作...")
+            print("-" * 80)
+            
+            # --------- TODO: 添加机械臂启动位置控制代码 ---------
+            # 使用 joint_state 中的关节角度数据，控制机械臂运动到抓取位置
+            # 需要实现的功能：
+            # 1. 读取 joint_state 中的关节角度信息
+            #    - 可通过 joint_state.name 获取关节名称列表
+            #    - 可通过 joint_state.position 获取对应的关节角度列表
+            # 2. 发送运动命令到机械臂（异步或同步）
+            #    - 通过发布/moveit_simple_actions_server接口或类似的话题
+            #    - 或使用 MoveIt2 的执行接口
+            # 3. 等待机械臂运动完成（使用超时机制）
+            #    - 订阅关节状态话题，检查是否到达目标位置
+            #    - 或等待异步完成回调
+            # 4. 打开夹爪，执行抓取
+            #    - 发布夹爪控制命令（open）
+            # 5. 等待抓取完成
+            #
+            # 示例代码框架（需根据实际机械臂接口调整）：
+            # ----
+            # # 构建运动命令
+            # trajectory_msg = self._build_trajectory_from_joint_state(joint_state, group_name)
+            # 
+            # # 发送运动命令
+            # self._send_arm_motion_command(trajectory_msg)
+            # 
+            # # 等待运动完成（带超时）
+            # if not self._wait_for_arm_motion_complete(timeout=10.0):
+            #     raise RuntimeError("机械臂运动超时")
+            # 
+            # # 打开夹爪执行抓取
+            # self._control_gripper(action='open')
+            # 
+            # # 等待夹爪完成
+            # time.sleep(1.0)
+            # ----
+            
+            # 临时占位符：等待2秒（代表抓取过程）
+            time.sleep(2.0)
+            
+            print("✓ 抓取动作已完成")
+            print(f"  规划组: {group_name}")
+            print(f"  关节数: {len(joint_state.name)}")
+            
+            # ============ 第2步：询问用户选择放置位置 ============
+            print("\n[步骤 2/3] 询问放置位置...")
+            print("-" * 80)
+            
+            place_location = self._prompt_place_location()
+            
+            # ============ 第3步：控制机械臂运动到放置位置 ============
+            print("\n[步骤 3/3] 运动到放置位置...")
+            print("-" * 80)
+            
+            # --------- TODO: 添加机械臂放置位置控制代码 ---------
+            # 根据 place_location（放置位置的标识符），控制机械臂运动到对应位置
+            # 需要实现的功能：
+            # 1. 根据 place_location 确定目标位置的关节角度或笛卡尔坐标
+            #    - 可预先定义多个标准放置位置的关节角度配置
+            #    - 或通过逆运动学计算目标位置的关节角度
+            # 2. 发送运动命令到机械臂
+            #    - 同样通过 MoveIt2 或其他接口
+            # 3. 等待机械臂运动完成
+            # 4. 闭合夹爪，完成放置
+            #    - 发布夹爪控制命令（close）
+            # 5. 等待完成
+            #
+            # 示例代码框架（需根据实际机械臂接口调整）：
+            # ----
+            # # 获取放置位置的目标配置
+            # target_config = self._get_place_location_config(place_location)
+            # 
+            # # 构建运动命令
+            # trajectory_msg = self._build_trajectory_from_config(target_config, group_name)
+            # 
+            # # 发送运动命令
+            # self._send_arm_motion_command(trajectory_msg)
+            # 
+            # # 等待运动完成（带超时）
+            # if not self._wait_for_arm_motion_complete(timeout=10.0):
+            #     raise RuntimeError("机械臂运动超时")
+            # 
+            # # 闭合夹爪，完成放置
+            # self._control_gripper(action='close')
+            # 
+            # # 等待夹爪完成
+            # time.sleep(1.0)
+            # ----
+            
+            # 临时占位符：等待2秒（代表放置过程）
+            time.sleep(2.0)
+            
+            print(f"✓ 已将物体放置到: {place_location['name']}")
+            
+            print("\n")
+            print("=" * 80)
+            print("✓ 抓取-放置流程已完成 ✓")
+            print("=" * 80)
+            print("\n")
+            
+        except Exception as e:
+            self.get_logger().error(f"执行抓取放置流程失败: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            print("=" * 80)
+            print("✗ 抓取-放置流程执行失败")
+            print("=" * 80)
+            print("\n")
+    
+    def _prompt_place_location(self):
+        """询问用户选择物体的放置位置
+        
+        提供多个预设的放置位置选项，用户可选择其中一个。
+        
+        放置位置定义：
+        - 左前方：桌子左侧前方，适合放置较轻的物体
+        - 中央：桌子正前方中央
+        - 右前方：桌子右侧前方，对称于左前方
+        - 左侧：桌子左侧，靠近机械臂左边
+        - 右侧：桌子右侧，远离机械臂
+        
+        Returns:
+            dict: 返回选定位置的信息字典，包含：
+                  - 'id': 位置标识符（'1'-'5'）
+                  - 'name': 位置名称（如'左前方'）
+                  - 'description': 位置描述
+        """
+        print("-" * 80)
+        print("请选择物体的放置位置:")
+        print("-" * 80)
+        
+        # 定义可用的放置位置
+        # 每个位置对应一个唯一的标识符和描述信息
+        # 后续可根据需要添加具体的坐标或关节角度配置
+        place_locations = {
+            '1': {
+                'id': '1',
+                'name': '左前方',
+                'description': '桌子左侧前方（较近）'
+            },
+            '2': {
+                'id': '2',
+                'name': '中央',
+                'description': '桌子正前方中央'
+            },
+            '3': {
+                'id': '3',
+                'name': '右前方',
+                'description': '桌子右侧前方（较近）'
+            },
+            '4': {
+                'id': '4',
+                'name': '左侧',
+                'description': '桌子左侧（靠近）'
+            },
+            '5': {
+                'id': '5',
+                'name': '右侧',
+                'description': '桌子右侧（远离）'
+            },
+        }
+        
+        # 显示位置选项
+        for key, info in place_locations.items():
+            print(f"  {key}. {info['name']:10} - {info['description']}")
+        
+        print("-" * 80)
+        
+        # 循环获取有效的用户输入
+        while True:
+            user_choice = input("请选择放置位置 (1-5): ").strip()
+            if user_choice in place_locations:
+                selected_location = place_locations[user_choice]
+                print(f"✓ 已选择: {selected_location['name']}")
+                return selected_location
+            else:
+                print("✗ 无效的选择，请输入 1-5")
+    
+    def _wait_for_user_continue(self):
+        """等待用户按 Enter 键继续
+        
+        在整个抓取-放置流程完成后，等待用户的确认信号
+        然后恢复图像处理，继续进行下一个物体的检测
+        
+        这个方法让用户有时间查看程序的执行过程和输出
+        """
+        print("-" * 80)
+        input("按 Enter 键继续检测下一个物体...")
+        print("\n")
+    
+    def _resume_image_processing(self):
+        """恢复图像处理 - 解除 synchronized_image_cb 的暂停状态
+        
+        这个方法将暂停标志重新设置为False，使synchronized_image_cb
+        回调重新开始接收和处理新的图像帧。
+        
+        线程安全：使用线程锁保护标志的修改，避免竞态条件。
+        """
+        # ============ 使用线程锁保护标志修改 ============
+        # 确保主线程和后台线程不会同时修改pause_image_processing
+        with self.ik_result_lock:
+            # 设置暂停标志为False，恢复synchronized_image_cb的正常运行
+            self.pause_image_processing = False
+            # 清空保存的IK结果数据
+            self.ik_result_data = None
+        
+        self.get_logger().info("✓ 图像处理已恢复")
     
     def publish_grasp_pose(self, coords_3d, pixel_coords, num_detections):
         """发布抓取点的位姿信息
@@ -1431,14 +1871,27 @@ class YoloGrabNode(Node):
         )
 
     def synchronized_image_cb(self, color_msg, depth_msg):
-        """同步处理彩色图和深度图的回调函数
+        """同步处理彩色图和深度图的回调函数 - 支持IK结果确认时的暂停
         
         该回调函数确保处理的彩色图和深度图来自同一时刻的传感器数据
+        
+        **暂停机制说明：**
+        - 当IK解算成功时，该回调会被暂停，停止接收新的图像帧
+        - 暂停期间等待用户在命令行确认是否执行抓取
+        - 用户确认后，该回调恢复正常运行
+        - 暂停状态由 self.pause_image_processing 标志控制
         
         Args:
             color_msg: 彩色图像消息 (sensor_msgs/msg/Image)
             depth_msg: 深度图像消息 (sensor_msgs/msg/Image)
         """
+        # ============ 检查暂停状态 ============
+        # 当IK解算成功且用户正在命令行确认时，暂停本回调的处理
+        with self.ik_result_lock:
+            # 如果暂停标志为True，直接返回，不处理新图像
+            if self.pause_image_processing:
+                return
+        
         # ============ 消息转换 ============
         # 将ROS消息转换为OpenCV格式
         # 彩色图：BGR格式（OpenCV标准格式）
