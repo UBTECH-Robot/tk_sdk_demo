@@ -1,3 +1,4 @@
+import time
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image, CameraInfo, JointState
@@ -16,10 +17,20 @@ from tf2_geometry_msgs import PointStamped as TF2PointStamped
 from moveit_msgs.srv import GetPositionIK
 from moveit_msgs.msg import RobotState, PositionIKRequest
 from tf2_ros import StaticTransformBroadcaster
+from bodyctrl_msgs.msg import (
+    CmdSetMotorPosition, SetMotorPosition,
+    CmdMotorCtrl, MotorCtrl,
+    CmdSetMotorSpeed, SetMotorSpeed
+)
+from std_msgs.msg import Header, String
 
 # ros2 run grab_demo yolo_grab_node --target_classes apple
 # 由于使用 ApproximateTimeSynchronizer 对彩色图和深度图进行帧同步处理，所以只推荐运行在41.2的orin板上（也就是头部相机所连接的板）。
 # 在41.1的x86板上运行则会出现无法进行同步的问题，彩色图和深度图的传输会大量无效占用带宽，导致 synchronized_image_cb 回调长时间无法被调用。
+
+# 控制参数定义
+VELOCITY_LIMIT = 0.2  # 速度限制（弧度/秒）
+CURRENT_LIMIT = 5.0  # 电流限制（安培）
 
 prepare_pose = {
     "left_arm": [
@@ -30,12 +41,17 @@ prepare_pose = {
         {21: 0.5, 22: -0.15, 23: -0.1, 24: -0.9, 25: -0.2, 26: 0.0, 27: 0.0},
         {21: 0.5, 22: -0.4, 23: -0.1, 24: -2.0, 25: -0.2, 26: 0.0, 27: 0.0},
     ],
+    "head": [
+        {1: 0.0, 2: 0.0, 3: 0.0},
+    ]
 }
 
 class YoloGrabNode(Node):
     def __init__(self):
         super().__init__("yolo_grab_node")
         
+        self._init_head_pose()
+        return
         # ============ 按功能分类进行初始化 ============
         self._init_moveit_config()          # MoveIt2 规划组配置
         self._init_basic_components()        # 基础组件初始化
@@ -45,6 +61,73 @@ class YoloGrabNode(Node):
         self._init_camera_parameters()       # 相机参数初始化
         self._init_tf_transforms()           # TF2 坐标系变换配置
         self._init_moveit_ik_service()       # MoveIt2 IK服务配置
+
+    def _init_head_pose(self):
+        self.head_pos_cmd_publisher = self.create_publisher(
+            CmdSetMotorPosition,
+            '/head/cmd_pos',
+            10
+        )
+        self.get_logger().info("✓ 头部电机位置模式控制发布者已创建（话题：/head/cmd_pos）")
+        time.sleep(0.5)  # 确保发布者初始化完成
+        self.control_head_pos()
+
+    def create_header(self):
+        """
+        创建消息头
+        
+        返回值：
+            Header: 包含时间戳和坐标系信息的消息头
+            
+        说明：
+            所有命令消息都需要包含header信息，用于时间同步和坐标系标识
+        """
+        # 获取当前时间（秒和纳秒）
+        now = self.get_clock().now()
+        
+        # 创建Header对象
+        header = Header()
+        header.stamp.sec = int(now.nanoseconds // 1_000_000_000)  # 转换为秒
+        header.stamp.nanosec = int(now.nanoseconds % 1_000_000_000)  # 剩余纳秒
+        header.frame_id = 'head'  # 坐标系ID
+        
+        return header
+
+    def control_head_pos(self):
+        """
+        头部电机位置调整，以便让头部相机可顺利看到正前方的桌面上的物体
+        """
+        self.get_logger().info("")
+        self.get_logger().info("=" * 50)
+        self.get_logger().info("【头部电机位置调整】开始执行")
+        self.get_logger().info("=" * 50)
+        
+        for pose in prepare_pose['head']:
+            # 创建消息头
+            header = self.create_header()
+            
+            # 创建位置模式命令消息
+            msg = CmdSetMotorPosition()
+            msg.header = header
+            
+            # 为每个电机创建回零命令
+            for motor_id, position in pose.items():
+                # 创建单个电机的位置命令
+                cmd = SetMotorPosition()
+                cmd.name = motor_id  # 电机ID
+                cmd.pos = position  # 目标位置
+                cmd.spd = VELOCITY_LIMIT  # 速度限制（弧度/秒）
+                cmd.cur = CURRENT_LIMIT  # 电流限制（安培）
+                
+                # 添加到消息数组
+                msg.cmds.append(cmd)
+                
+                self.get_logger().info(f"  电机 {motor_id}：运动到位置（{position} rad）")
+            
+            # 发送命令
+            self.head_pos_cmd_publisher.publish(msg)
+            self.get_logger().info("✓ 头部电机位置调整命令已发送")
+            time.sleep(1.5)  # 给电机足够的时间运动到位
 
     def _init_moveit_config(self):
         """初始化 MoveIt2 规划组配置
@@ -1071,9 +1154,7 @@ class YoloGrabNode(Node):
         
         except Exception as e:
             # 其他未预期的错误
-            self.get_logger().error(
-                f"坐标系变换发生未预期的错误: {str(e)}"
-            )
+            self.get_logger().error(f"坐标系变换发生未预期的错误: {str(e)}")
             return {
                 'success': False,
                 'error': f"UnexpectedException: {str(e)}",
