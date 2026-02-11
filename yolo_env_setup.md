@@ -135,3 +135,8 @@ ros2 launch moveit2_config moveit_rviz.launch.py
 
 
 ros2 run grab_demo yolo_grab_node --target_classes apple
+
+相机话题复制：
+ros2 run topic_tools relay /camera/color/image_raw /ob_camera_head/color/image_raw & \
+ros2 run topic_tools relay /camera/depth/image_raw /ob_camera_head/depth/image_raw & \
+ros2 run topic_tools relay /camera/depth/camera_info /ob_camera_head/depth/camera_info &

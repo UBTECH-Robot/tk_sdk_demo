@@ -42,7 +42,7 @@ prepare_pose = {
         {21: 0.5, 22: -0.4, 23: -0.1, 24: -2.0, 25: -0.2, 26: 0.0, 27: 0.0},
     ],
     "head": [
-        {1: 0.0, 2: 0.0, 3: 0.0},
+        {1: 0.0, 2: 0.3, 3: 0.0},
     ]
 }
 
@@ -50,10 +50,9 @@ class YoloGrabNode(Node):
     def __init__(self):
         super().__init__("yolo_grab_node")
         
-        self._init_head_pose()
-        return
         # ============ 按功能分类进行初始化 ============
-        self._init_moveit_config()          # MoveIt2 规划组配置
+        self._init_head_pose()               # 头部电机位置调整
+        self._init_moveit_config()           # MoveIt2 规划组配置
         self._init_basic_components()        # 基础组件初始化
         self._init_yolo_model()              # YOLO 模型加载
         self._init_target_classes()          # 目标检测类别配置
@@ -63,16 +62,12 @@ class YoloGrabNode(Node):
         self._init_moveit_ik_service()       # MoveIt2 IK服务配置
 
     def _init_head_pose(self):
-        self.head_pos_cmd_publisher = self.create_publisher(
-            CmdSetMotorPosition,
-            '/head/cmd_pos',
-            10
-        )
+        self.head_pos_cmd_publisher = self.create_publisher(CmdSetMotorPosition, '/head/cmd_pos', 10)
         self.get_logger().info("✓ 头部电机位置模式控制发布者已创建（话题：/head/cmd_pos）")
         time.sleep(0.5)  # 确保发布者初始化完成
         self.control_head_pos()
 
-    def create_header(self):
+    def create_header_for_head_motor(self):
         """
         创建消息头
         
@@ -104,7 +99,7 @@ class YoloGrabNode(Node):
         
         for pose in prepare_pose['head']:
             # 创建消息头
-            header = self.create_header()
+            header = self.create_header_for_head_motor()
             
             # 创建位置模式命令消息
             msg = CmdSetMotorPosition()
@@ -365,7 +360,7 @@ class YoloGrabNode(Node):
         # MoveIt2 IK服务客户端
         # 用于调用逆运动学解算服务
         self.ik_client = self.create_client(GetPositionIK, '/compute_ik')
-        self.get_logger().info("等待 /compute_ik 服务...")
+        # self.get_logger().info("等待 /compute_ik 服务...")
         
         # 订阅当前机器人状态
         # IK服务需要当前的机器人关节状态作为初始配置
@@ -382,7 +377,6 @@ class YoloGrabNode(Node):
         # 用于在回调中异步处理 IK 服务结果
         self.pending_ik_futures = {}
 
-    
     def publish_static_transform(self):
         """
         发布静态TF变换：camera_head_link -> ob_camera_head_link
@@ -413,7 +407,6 @@ class YoloGrabNode(Node):
         self.get_logger().info(
             f"✓ 静态TF变换已发布: camera_head_link -> ob_camera_head_link"
         )
-
     
     def joint_states_callback(self, msg):
         """获取当前机器人关节状态
@@ -424,8 +417,6 @@ class YoloGrabNode(Node):
             msg: sensor_msgs/msg/JointState 消息
         """
         self.current_joint_state = msg
-
-
 
     def _parse_target_classes_from_args(self):
         """
@@ -985,7 +976,6 @@ class YoloGrabNode(Node):
         }
         
         return result
-    
 
     def transform_point_to_target_frame(self, point_camera, target_frame=None):
         """将相机坐标系下的3D点变换到目标坐标系
