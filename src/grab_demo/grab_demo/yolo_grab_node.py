@@ -35,10 +35,23 @@ prepare_pose = {
 class YoloGrabNode(Node):
     def __init__(self):
         super().__init__("yolo_grab_node")
+        
+        # ============ 按功能分类进行初始化 ============
+        self._init_moveit_config()          # MoveIt2 规划组配置
+        self._init_basic_components()        # 基础组件初始化
+        self._init_yolo_model()              # YOLO 模型加载
+        self._init_target_classes()          # 目标检测类别配置
+        self._init_image_synchronizer()      # 图像同步器配置
+        self._init_camera_parameters()       # 相机参数初始化
+        self._init_tf_transforms()           # TF2 坐标系变换配置
+        self._init_moveit_ik_service()       # MoveIt2 IK服务配置
 
-        # ============ MoveIt2 规划组配置 ============
-        # 定义各规划组包含的关节
-        # 这些关节名称来自 moveit2_config/config/tiangong2pro_urdf_with_hands.srdf
+    def _init_moveit_config(self):
+        """初始化 MoveIt2 规划组配置
+        
+        定义各规划组包含的关节
+        这些关节名称来自 moveit2_config/config/tiangong2pro_urdf_with_hands.srdf
+        """
         self.group_joints = {
             'left_arm': [
                 'shoulder_pitch_l_joint',
@@ -60,39 +73,52 @@ class YoloGrabNode(Node):
             ]
         }
 
-        # ============ 发布静态TF变换 ============
+    def _init_basic_components(self):
+        """初始化基础组件
+        
+        包括：
+        - 发布静态 TF 变换
+        - 初始化 CvBridge
+        - 创建保存目录
+        """
+        # 发布静态TF变换
         self.publish_static_transform()
-
+        
+        # 初始化 CvBridge，用于ROS图像消息与OpenCV格式的转换
         self.bridge = CvBridge()
-
+        
         # 创建保存目录
         self.save_dir = "saved_data/grab_node"
         if os.path.exists(self.save_dir):
             shutil.rmtree(self.save_dir)
         os.makedirs(self.save_dir)
 
-        # ============ 加载 YOLO 模型 ============
+    def _init_yolo_model(self):
+        """初始化 YOLO 模型和推理设置
+        
+        包括：
+        - 选择推理设备（GPU 或 CPU）
+        - 加载 YOLO 模型
+        - GPU 预热
+        
+        性能对比（YOLOv8n，Jetson Orin）：
+          - CPU: 150-300ms/frame (3-7 FPS)
+          - GPU: 25-50ms/frame (20-40 FPS)
+          - 加速比: 4-6倍
+        """
         # 选择推理设备：GPU 或 CPU
         # 对于 Jetson Orin，强烈推荐使用 GPU（device=0），性能提升 4-6 倍
-        # 
         # 设备选项：
         #   - device=0 或 device="cuda": 使用第一块GPU（Jetson Orin内置GPU）
         #   - device="cpu": 使用CPU（较慢）
         #   - device="cuda:0": 显式指定第一块GPU
-        #
-        # 性能对比（YOLOv8n，Jetson Orin）：
-        #   CPU: 150-300ms/frame (3-7 FPS)
-        #   GPU: 25-50ms/frame (20-40 FPS)
-        #   加速比: 4-6倍
         self.device = "cuda"  # 改为 "cpu" 可切换到CPU推理
         self.model = YOLO("yolo_models/yolov8n.pt")
         
-        # ============ GPU 预热 ============
-        # 第一次GPU推理会有初始化开销（~500ms）
+        # GPU 预热：第一次GPU推理会有初始化开销（~500ms）
         # 预热可以避免第一帧检测时的长延迟
         if self.device == "cuda":
             try:
-                import numpy as np
                 dummy_input = np.zeros((480, 640, 3), dtype=np.uint8)
                 self.model.predict(
                     source=dummy_input,
@@ -103,44 +129,41 @@ class YoloGrabNode(Node):
                 self.get_logger().info("✓ GPU 预热完成")
             except Exception as e:
                 self.get_logger().warn(f"GPU预热失败: {str(e)}，但不影响后续推理")
+
+    def _init_target_classes(self):
+        """初始化目标检测类别配置
         
-        # ============ 目标类别配置 ============
-        # 指定要检测的物体类别（大小写不敏感）
-        # 
-        # 使用方法 1 - 直接修改代码中的默认值：
-        #   在 __init__ 方法中修改 target_classes 的值
-        #
-        # 示例用法：
-        #   1. 只检测苹果：--target_classes apple
-        #   2. 检测苹果和橙子：--target_classes apple orange
-        #   3. 检测人和车：--target_classes person car
-        #   4. 检测所有物体：--target_classes all
-        #
-        # 可用的类别列表（YOLO v8n 支持的 COCO 数据集类别，共 80 类）：
-        #   person, bicycle, car, motorbike, aeroplane, bus, train, truck,
-        #   boat, traffic light, fire hydrant, stop sign, parking meter, bench,
-        #   cat, dog, horse, sheep, cow, elephant, bear, zebra, giraffe, backpack,
-        #   umbrella, handbag, tie, suitcase, frisbee, skis, snowboard, sports ball,
-        #   kite, baseball bat, baseball glove, skateboard, surfboard, tennis racket,
-        #   bottle, wine glass, cup, fork, knife, spoon, bowl, banana, apple, sandwich,
-        #   orange, broccoli, carrot, hot dog, pizza, donut, cake, chair, couch,
-        #   potted plant, bed, dining table, toilet, tv, laptop, mouse, remote,
-        #   keyboard, microwave, oven, toaster, sink, refrigerator, book, clock,
-        #   vase, scissors, teddy bear, hair drier, toothbrush
-        #
+        从命令行参数解析目标类别，建立类别名称到 ID 的映射
         
+        使用方法：
+            python3 -m yolo_grab_node --target_classes apple
+            python3 -m yolo_grab_node --target_classes orange
+            python3 -m yolo_grab_node  # 使用默认值 ['apple']
+        
+        可用的类别列表（YOLO v8n 支持的 COCO 数据集类别，共 80 类）：
+          person, bicycle, car, motorbike, aeroplane, bus, train, truck,
+          boat, traffic light, fire hydrant, stop sign, parking meter, bench,
+          cat, dog, horse, sheep, cow, elephant, bear, zebra, giraffe, backpack,
+          umbrella, handbag, tie, suitcase, frisbee, skis, snowboard, sports ball,
+          kite, baseball bat, baseball glove, skateboard, surfboard, tennis racket,
+          bottle, wine glass, cup, fork, knife, spoon, bowl, banana, apple, sandwich,
+          orange, broccoli, carrot, hot dog, pizza, donut, cake, chair, couch,
+          potted plant, bed, dining table, toilet, tv, laptop, mouse, remote,
+          keyboard, microwave, oven, toaster, sink, refrigerator, book, clock,
+          vase, scissors, teddy bear, hair drier, toothbrush
+        """
         # 从命令行参数解析目标类别
         target_classes = self._parse_target_classes_from_args()
         
         # 获取模型的所有类别名称（字典：类别ID -> 类别名称）
-        self.class_names = self.model.names  # {'0': 'person', '1': 'bicycle', ..., '47': 'apple'}
+        self.class_names = self.model.names
         
         # 构建类别名称到 ID 的映射（小写以支持大小写不敏感的搜索）
         self.class_id_map = {v.lower(): k for k, v in self.class_names.items()}
         
         # 将指定的目标类别名称转换为 YOLO 类别 ID
         self.target_class_ids = []
-        if target_classes and target_classes != ['all']:  # 只有当 target_classes 非空且不是 'all' 时才过滤
+        if target_classes and target_classes != ['all']:
             for class_name in target_classes:
                 class_name_lower = class_name.lower()
                 if class_name_lower in self.class_id_map:
@@ -157,19 +180,20 @@ class YoloGrabNode(Node):
         if target_classes and target_classes != ['all'] and not self.target_class_ids:
             self.get_logger().warn("⚠ 未找到有效的目标类别，将检测所有物体")
         
-        # 如果 target_classes 为空或是 'all'，则不进行类别过滤
+        # 日志输出过滤状态
         if self.target_class_ids:
             self.get_logger().info(f"类别过滤已启用，检测目标: {target_classes}")
         else:
             self.get_logger().info("类别过滤已禁用，检测所有物体")
 
-        # ============ 消息同步配置 ============
-        # 使用 message_filters 进行帧同步
-        # ApproximateTimeSynchronizer: 近似时间同步器
-        # 功能：同步来自不同话题的消息，允许时间戳有小偏差，
-        # 应用场景：不同传感器采样频率和发布时间不同，时间戳有轻微偏差，如彩色相机和深度相机同步、激光雷达和IMU数据融合。
+    def _init_image_synchronizer(self):
+        """初始化图像同步器
         
-        
+        使用 message_filters 进行彩色图和深度图的帧同步
+        ApproximateTimeSynchronizer: 近似时间同步器
+        功能：同步来自不同话题的消息，允许时间戳有小偏差
+        应用场景：不同传感器采样频率和发布时间不同，时间戳有轻微偏差
+        """
         # 创建彩色图像订阅器
         color_sub = Subscriber(self, Image, "/ob_camera_head/color/image_raw")
         
@@ -177,82 +201,91 @@ class YoloGrabNode(Node):
         depth_sub = Subscriber(self, Image, "/ob_camera_head/depth/image_raw")
         
         # 创建同步器：queue_size=10表示缓冲区大小，slop=0.1表示允许100ms的时间差
-        # 当接收到来自两个话题的消息时，如果时间差在slop范围内，就认为是同一帧
         self.ts = ApproximateTimeSynchronizer(
             [color_sub, depth_sub],
             queue_size=10,
-            slop=0.1  # 允许100ms的时间差
+            slop=0.1
         )
         
         # 注册同步回调函数
         self.ts.registerCallback(self.synchronized_image_cb)
-
+        
         # 发布抓取点
         self.pub = self.create_publisher(PoseStamped, "/grasp_pose", 10)
         
         # 存储最新的深度数据（用于在回调中访问）
         self.latest_depth_img = None
         self.latest_color_timestamp = None
+
+    def _init_camera_parameters(self):
+        """初始化相机参数
         
-        # ============ 获取深度相机校准信息 ============
+        包括：
+        - 订阅深度相机的 camera_info 话题
+        - 初始化相机内参矩阵相关变量
+        
+        相机内参矩阵的结构：
+          K = [[fx,  0, cx],
+               [ 0, fy, cy],
+               [ 0,  0,  1]]
+        其中：
+          - fx, fy: 焦距（像素单位）
+          - cx, cy: 主点坐标（图像中心，像素坐标）
+        """
         # 订阅深度相机的 camera_info 话题
         # camera_info 包含相机的内参矩阵、畸变系数等
-        # 使用默认 QoS 策略以匹配发布者
         self.camera_info_sub = self.create_subscription(
             CameraInfo,
             "/ob_camera_head/depth/camera_info",
             self.depth_camera_info_cb,
-            10  # 使用默认 QoS，queue size = 10
+            10
         )
         
         # 标志位：记录是否已获取过camera_info
         self.camera_info_received = False
-        self.depth_unit = None  # 深度单位（如果能从camera_info获取）
+        self.depth_unit = None  # 深度单位
         
-        # ============ 相机内参矩阵（用于像素坐标到3D坐标的反投影） ============
-        # 相机内参矩阵 K 的形式：
-        #   K = [[fx,  0, cx],
-        #        [ 0, fy, cy],
-        #        [ 0,  0,  1]]
-        # 其中：
-        #   fx, fy: 焦距（像素单位）
-        #   cx, cy: 主点坐标（图像中心，像素坐标）
-        # 这些参数在 depth_camera_info_cb 回调中从 camera_info 消息中获取
+        # 相机内参矩阵（用于像素坐标到3D坐标的反投影）
         self.camera_matrix_K = None  # 相机内参矩阵（3x3）
         self.fx = None  # 焦距 x
         self.fy = None  # 焦距 y
         self.cx = None  # 主点 x
         self.cy = None  # 主点 y
+
+    def _init_tf_transforms(self):
+        """初始化 TF2 坐标系变换配置
         
-        # ============ TF2 坐标系变换配置 ============
-        # 用于将相机坐标系下的3D点变换到机器人基座坐标系
+        用于将相机坐标系下的3D点变换到机器人基座坐标系
+        """
+        # TF2 坐标系变换
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         
-        # 相机光学坐标系（OpenCV和深度相机的标准坐标系），实测观察到是 ob_camera_head_color_frame
+        # 相机光学坐标系（OpenCV和深度相机的标准坐标系）
         self.ob_camera_frame = "ob_camera_head_color_frame"
         
         # 目标基座坐标系（机器人抓取基准）
-        # 对于人形机器人，通常是 L_base_link（左腿基座）或 R_base_link（右腿基座）
         # 用户可通过命令行参数 --target_frame 指定
         self.target_frame = self._parse_target_frame_from_args()
-
+        
         self.get_logger().info(f"相机光学坐标系: {self.ob_camera_frame}")
         self.get_logger().info(f"目标基座坐标系: {self.target_frame}")
+
+    def _init_moveit_ik_service(self):
+        """初始化 MoveIt2 IK服务配置
         
-        # ============ MoveIt2 IK服务客户端 ============
+        包括：
+        - 创建 IK 服务客户端
+        - 订阅当前机器人关节状态
+        - 初始化异步 IK 处理
+        """
+        # MoveIt2 IK服务客户端
         # 用于调用逆运动学解算服务
         self.ik_client = self.create_client(GetPositionIK, '/compute_ik')
         self.get_logger().info("等待 /compute_ik 服务...")
-        # 不阻塞等待，后续调用时再检查
-        # if self.ik_client.wait_for_service(timeout_sec=5.0):
-        #     self.get_logger().info("✓ /compute_ik 服务已连接")
-        # else:
-        #     self.get_logger().warn("⚠ /compute_ik 服务未就绪，IK解算功能可能不可用")
         
-        # ============ 订阅当前机器人状态 ============
+        # 订阅当前机器人状态
         # IK服务需要当前的机器人关节状态作为初始配置
-        # 不提供有效的robot_state会导致MoveIt2返回 "Found empty JointState message" 错误
         self.current_joint_state = None
         self.joint_states_sub = self.create_subscription(
             JointState,
@@ -262,7 +295,7 @@ class YoloGrabNode(Node):
         )
         self.get_logger().info("已订阅 /joint_states 话题")
         
-        # ============ IK 异步处理 ============
+        # IK 异步处理
         # 用于在回调中异步处理 IK 服务结果
         self.pending_ik_futures = {}
 
