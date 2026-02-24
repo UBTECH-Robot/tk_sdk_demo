@@ -25,6 +25,8 @@ from bodyctrl_msgs.msg import (
 from std_msgs.msg import Header, String
 import threading
 from queue import Queue
+# from tf_transformations import quaternion_from_euler
+# import math
 
 # ros2 run grab_demo yolo_grab_node --target_classes apple
 # 由于使用 ApproximateTimeSynchronizer 对彩色图和深度图进行帧同步处理，所以只推荐运行在41.2的orin板上（也就是头部相机所连接的板）。
@@ -292,7 +294,12 @@ class YoloGrabNode(Node):
         self.ts.registerCallback(self.synchronized_image_cb)
         
         # 发布抓取点
-        self.pub = self.create_publisher(PoseStamped, "/grasp_pose", 10)
+        self.grasp_pose_pub = self.create_publisher(PoseStamped, "/grasp_pose", 10)
+        
+        # 创建 /gui/joint_command 发布者（用于向GUI发送关节命令）
+        # 消息格式：JSON字符串，如 {"11": 0.5, "12": 0.15, ...}
+        self.joint_command_pub = self.create_publisher(String, "/gui/joint_command", 10)
+        self.get_logger().info("✓ GUI关节命令发布者已创建（话题：/gui/joint_command）")
         
         # 存储最新的深度数据（用于在回调中访问）
         self.latest_depth_img = None
@@ -713,8 +720,8 @@ class YoloGrabNode(Node):
             target_class_names = ', '.join([self.class_names[cid] for cid in self.target_class_ids])
             other_objects_str = ', '.join([f"{name}({count})" for name, count in other_objects.items()])
             
-            self.get_logger().info(f"未检测到目标物体: {target_class_names} | 检测到其他物体: {other_objects_str}")
-            self.get_logger().info("-" * 70)
+            # self.get_logger().info(f"未检测到目标物体: {target_class_names} | 检测到其他物体: {other_objects_str}")
+            # self.get_logger().info("-" * 50)
             
             # 返回False，表示过滤失败，调用方应忽略本帧
             return False
@@ -882,6 +889,7 @@ class YoloGrabNode(Node):
         """计算检测框的中心点坐标和深度值
         
         从检测框计算中心点的像素坐标，并从深度图获取对应的深度值
+        如果中心点深度无效，则尝试采样周围区域求平均值
         
         Args:
             box: YOLO检测框对象
@@ -903,6 +911,27 @@ class YoloGrabNode(Node):
         
         # 从深度图获取中心点的深度值
         cz_raw = self.get_depth_at_point(depth_img, int(cx), int(cy))
+        
+        # 如果中心点深度无效，尝试采样周围3x3区域求平均值
+        if cz_raw == 0:
+            self.get_logger().info(f"⚠ 中心点深度无效，尝试采样周围区域...")
+            valid_depths = []
+            
+            # 采样3x3区域
+            for dy in [-2, 0, 2]:
+                for dx in [-2, 0, 2]:
+                    sample_x = int(cx + dx)
+                    sample_y = int(cy + dy)
+                    depth = self.get_depth_at_point(depth_img, sample_x, sample_y)
+                    if depth > 0:
+                        valid_depths.append(depth)
+            
+            # 如果找到有效深度值，使用中位数
+            if valid_depths:
+                cz_raw = np.median(valid_depths)
+                self.get_logger().info(f"✓ 使用周围{len(valid_depths)}个有效深度值的中位数: {cz_raw}")
+            else:
+                self.get_logger().warn(f"✗ 周围区域也没有有效深度值")
         
         # 深度值单位转换：假设原始单位是毫米，转换为米
         cz_meters = float(cz_raw / 1000.0)
@@ -1208,6 +1237,42 @@ class YoloGrabNode(Node):
         
         不在回调中阻塞等待，而是注册异步完成回调
         
+        IK精度说明：
+        ============
+        如果IK解算的关节角度应用到机械臂后，末端姿态与目标姿态有偏差，可能的原因包括：
+        
+        1. **求解器精度限制**：
+           - KDL求解器使用数值方法，存在数值误差
+           - kinematics.yaml中的search_resolution和timeout影响求解精度
+           - 已优化：search_resolution=0.001, timeout=0.05s, attempts=10
+        
+        2. **约束容差设置**：
+           - position_tolerance: 位置误差容忍度（默认0.0001m = 0.1mm）
+           - orientation_tolerance: 姿态误差容忍度（默认0.001rad ≈ 0.057°）
+           - 需要在精度和求解成功率之间平衡
+        
+        3. **关节限制影响**：
+           - 关节角度限制可能阻止求解器找到精确解
+           - 避免碰撞约束可能限制解的精度
+        
+        4. **URDF/SRDF配置**：
+           - 确保L_base_link是正确的末端执行器链接
+           - 检查DH参数和变换矩阵是否准确
+        
+        5. **坐标系一致性**：
+           - IK求解使用的坐标系必须与目标姿态的frame_id一致
+           - 默认使用pelvis坐标系，通过--target_frame参数可修改
+        
+        验证方法：
+        - 应用IK解算的关节角度后，运行：
+          ros2 run tf2_ros tf2_echo pelvis L_base_link
+        - 比较实际姿态与目标姿态的差异
+        
+        优化建议：
+        - 如果精度不足，可以尝试增加kinematics.yaml中的timeout
+        - 调整约束容差（在代码中修改position/orientation_constraint）
+        - 使用不同的IK求解器（如TracIK、IKFAST）
+        
         Args:
             target_pose_stamped (PoseStamped): 目标抓取位姿
             group_name (str): MoveIt规划组名称
@@ -1233,6 +1298,10 @@ class YoloGrabNode(Node):
             request.ik_request.robot_state.joint_state = self.current_joint_state
             request.ik_request.timeout.sec = 5
             request.ik_request.avoid_collisions = True
+            
+            # 注意：Constraints中的position/orientation约束主要用于路径规划
+            # KDL求解器通过pose_stamped中的完整姿态（位置+四元数）来求解IK
+            # 确保pose_stamped包含正确的位置和归一化的四元数
             
             # self.get_logger().info(f"发送异步 IK 请求: group={group_name}, frame={target_pose_stamped.header.frame_id}")
             
@@ -1277,6 +1346,15 @@ class YoloGrabNode(Node):
         if future_id not in self.pending_ik_futures:
             return
         
+        # ============ 检查是否已在处理其他IK结果 ============
+        # 如果已经有IK解算成功并在等待用户确认，则忽略后续的IK完成回调
+        # 这样可以避免多个IK解算结果同时输出到命令行
+        with self.ik_result_lock:
+            if self.pause_image_processing:
+                # 已经在处理IK结果，静默清理本次future并返回
+                self.pending_ik_futures.pop(future_id, None)
+                return
+        
         try:
             future_data = self.pending_ik_futures.pop(future_id)
             future = future_data['future']
@@ -1291,11 +1369,15 @@ class YoloGrabNode(Node):
             
             if error_code == 1:  # SUCCESS - IK解算成功
                 joint_state = response.solution.joint_state
+                target_pose = future_data['pose']
                 
                 # ============ 打印IK解算结果 ============
-                self.get_logger().info("=" * 70)
+                self.get_logger().info("=" * 50)
                 self.get_logger().info(f"✓ IK解算成功 (group: {group_name})")
                 self.get_logger().info(f"解算耗时: {elapsed_time*1000:.2f}ms")
+                self.get_logger().info(f"目标坐标系: {target_pose.header.frame_id}")
+                self.get_logger().info(f"目标位置: X={target_pose.pose.position.x:.6f}, Y={target_pose.pose.position.y:.6f}, Z={target_pose.pose.position.z:.6f}")
+                self.get_logger().info(f"目标姿态: x={target_pose.pose.orientation.x:.6f}, y={target_pose.pose.orientation.y:.6f}, z={target_pose.pose.orientation.z:.6f}, w={target_pose.pose.orientation.w:.6f}")
                 self.get_logger().info("关节角度解算结果:")
                 
                 # 只显示该规划组相关的关节
@@ -1304,7 +1386,12 @@ class YoloGrabNode(Node):
                     if name in group_joint_names:
                         self.get_logger().info(f"  {name}: {pos:.4f} rad ({np.degrees(pos):.2f}°)")
                 
-                self.get_logger().info("=" * 70)
+                self.get_logger().info("")
+                self.get_logger().info("验证提示：")
+                self.get_logger().info("  1. 应用上述关节角度到机械臂")
+                self.get_logger().info("  2. 运行: ros2 run tf2_ros tf2_echo pelvis L_base_link")
+                self.get_logger().info("  3. 比较实际姿态与上述目标姿态的差异")
+                self.get_logger().info("=" * 50)
                 
                 # ============ 保存IK结果并暂停图像处理 ============
                 # 使用线程锁保护共享变量的访问，避免竞态条件
@@ -1325,12 +1412,17 @@ class YoloGrabNode(Node):
                 
                 # ============ 启动后台线程等待用户输入 ============
                 # 在后台线程中等待用户输入，避免阻塞ROS2事件循环
-                # 如果上一个输入线程还在运行，先等待其完成（避免多个线程竞争）
+                # 如果上一个输入线程还在运行，说明用户还在处理前一个IK结果
+                # 此时应该丢弃当前IK结果，避免多个提示同时出现
                 if self.user_input_thread is not None and self.user_input_thread.is_alive():
-                    self.user_input_thread.join(timeout=0.5)  # 最多等待0.5秒
+                    # self.get_logger().info("⚠ 用户正在处理前一个IK结果，忽略当前IK结果")
+                    # 注意：此时图像处理已在提交IK请求时暂停
+                    # 由于不启动新线程，暂停状态会由前一个线程结束时恢复
+                    # 无需手动恢复pause_image_processing
+                    return
                 
                 # 创建新的后台线程来处理用户输入
-                # daemon=False 使得线程是守护线程，不会阻止程序退出
+                # daemon=False 使得线程是非守护线程，不会阻止程序退出
                 self.user_input_thread = threading.Thread(
                     target=self._wait_for_user_confirmation,
                     args=(joint_state, group_name),
@@ -1383,9 +1475,6 @@ class YoloGrabNode(Node):
              只有在流程完全结束后才会恢复。
         """
         try:
-            # ============ 阶段0：显示IK解算结果 ============
-            self._display_ik_results(joint_state, group_name)
-            
             # ============ 阶段1：询问用户是否执行抓取 ============
             user_execute_grasp = self._prompt_execute_grasp()
             
@@ -1395,11 +1484,11 @@ class YoloGrabNode(Node):
                 self._execute_grasp_and_place_sequence(joint_state, group_name)
             else:
                 # 用户选择放弃本次抓取
-                print("=" * 80)
-                print("✗ 用户选择: 放弃本次抓取 ✗")
-                print("-" * 80)
+                print("=" * 50)
+                print("用户已选择放弃本次抓取")
+                print("-" * 50)
                 print("图像处理将在用户确认后恢复...")
-                print("=" * 80)
+                print("=" * 50)
                 print("\n")
             
             # ============ 阶段3：等待用户确认继续 ============
@@ -1414,24 +1503,6 @@ class YoloGrabNode(Node):
             traceback.print_exc()
             # 异常发生时也要恢复图像处理，避免死锁
             self._resume_image_processing()
-    
-    def _display_ik_results(self, joint_state, group_name):
-        """显示IK解算结果详情
-        
-        在命令行输出IK解算的关键信息，便于用户查看
-        
-        Args:
-            joint_state (JointState): IK解算得到的关节状态
-            group_name (str): 规划组名称（如 'left_arm'）
-        """
-        print("\n")
-        print("=" * 80)
-        print("【IK解算结果已就绪】")
-        print("=" * 80)
-        print("✓ 上面已显示IK解算的关节角度结果")
-        print(f"  规划组: {group_name}")
-        print(f"  关节数: {len(joint_state.name)}")
-        print("-" * 80)
     
     def _prompt_execute_grasp(self):
         """询问用户是否执行抓取
@@ -1483,50 +1554,44 @@ class YoloGrabNode(Node):
         """
         try:
             print("\n")
-            print("=" * 80)
+            print("=" * 50)
             print("【开始执行抓取-放置流程】")
-            print("=" * 80)
+            print("=" * 50)
             print("✓ 用户选择: 执行抓取 ✓")
-            print("-" * 80)
+            print("-" * 50)
             
             # ============ 第1步：执行机械臂抓取动作 ============
             print("\n[步骤 1/3] 执行机械臂抓取动作...")
-            print("-" * 80)
+            print("-" * 50)
             
-            # --------- TODO: 添加机械臂启动位置控制代码 ---------
-            # 使用 joint_state 中的关节角度数据，控制机械臂运动到抓取位置
-            # 需要实现的功能：
-            # 1. 读取 joint_state 中的关节角度信息
-            #    - 可通过 joint_state.name 获取关节名称列表
-            #    - 可通过 joint_state.position 获取对应的关节角度列表
-            # 2. 发送运动命令到机械臂（异步或同步）
-            #    - 通过发布/moveit_simple_actions_server接口或类似的话题
-            #    - 或使用 MoveIt2 的执行接口
-            # 3. 等待机械臂运动完成（使用超时机制）
+            # --------- 发布关节命令到 /gui/joint_command 话题 ---------
+            # 根据IK解算结果，向GUI发送机械臂运动命令
+            # 使用 joint_state 参数（而非 self.ik_result_data）符合最佳实践：
+            # 1. 显式参数传递，逻辑更清晰
+            # 2. 不依赖全局状态，易于测试和维护
+            # 3. 符合函数式编程原则
+            
+            print("  正在发送关节命令到 /gui/joint_command...")
+            if self._publish_joint_command_to_gui(joint_state, group_name):
+                print("  ✓ 关节命令已发送")
+            else:
+                print("  ✗ 关节命令发送失败")
+                self.get_logger().error("关节命令发布失败，但继续执行流程")
+            
+            # --------- TODO: 添加后续的机械臂控制代码 ---------
+            # 后续需要实现的功能（在关节命令发送后）：
+            # 1. 等待机械臂运动完成（使用超时机制）
             #    - 订阅关节状态话题，检查是否到达目标位置
             #    - 或等待异步完成回调
-            # 4. 打开夹爪，执行抓取
+            #    - 示例：if not self._wait_for_arm_motion_complete(timeout=10.0):
+            #              raise RuntimeError("机械臂运动超时")
+            # 
+            # 2. 打开夹爪，执行抓取
             #    - 发布夹爪控制命令（open）
-            # 5. 等待抓取完成
-            #
-            # 示例代码框架（需根据实际机械臂接口调整）：
-            # ----
-            # # 构建运动命令
-            # trajectory_msg = self._build_trajectory_from_joint_state(joint_state, group_name)
+            #    - 示例：self._control_gripper(action='open')
             # 
-            # # 发送运动命令
-            # self._send_arm_motion_command(trajectory_msg)
-            # 
-            # # 等待运动完成（带超时）
-            # if not self._wait_for_arm_motion_complete(timeout=10.0):
-            #     raise RuntimeError("机械臂运动超时")
-            # 
-            # # 打开夹爪执行抓取
-            # self._control_gripper(action='open')
-            # 
-            # # 等待夹爪完成
-            # time.sleep(1.0)
-            # ----
+            # 3. 等待抓取完成
+            #    - time.sleep(1.0) 或等待夹爪状态反馈
             
             # 临时占位符：等待2秒（代表抓取过程）
             time.sleep(2.0)
@@ -1537,13 +1602,13 @@ class YoloGrabNode(Node):
             
             # ============ 第2步：询问用户选择放置位置 ============
             print("\n[步骤 2/3] 询问放置位置...")
-            print("-" * 80)
+            # print("-" * 50)
             
             place_location = self._prompt_place_location()
             
             # ============ 第3步：控制机械臂运动到放置位置 ============
             print("\n[步骤 3/3] 运动到放置位置...")
-            print("-" * 80)
+            print("-" * 50)
             
             # --------- TODO: 添加机械臂放置位置控制代码 ---------
             # 根据 place_location（放置位置的标识符），控制机械臂运动到对应位置
@@ -1586,18 +1651,18 @@ class YoloGrabNode(Node):
             print(f"✓ 已将物体放置到: {place_location['name']}")
             
             print("\n")
-            print("=" * 80)
+            print("=" * 50)
             print("✓ 抓取-放置流程已完成 ✓")
-            print("=" * 80)
+            print("=" * 50)
             print("\n")
             
         except Exception as e:
             self.get_logger().error(f"执行抓取放置流程失败: {str(e)}")
             import traceback
             traceback.print_exc()
-            print("=" * 80)
+            print("=" * 50)
             print("✗ 抓取-放置流程执行失败")
-            print("=" * 80)
+            print("=" * 50)
             print("\n")
     
     def _prompt_place_location(self):
@@ -1618,9 +1683,9 @@ class YoloGrabNode(Node):
                   - 'name': 位置名称（如'左前方'）
                   - 'description': 位置描述
         """
-        print("-" * 80)
+        print("-" * 50)
         print("请选择物体的放置位置:")
-        print("-" * 80)
+        print("-" * 50)
         
         # 定义可用的放置位置
         # 每个位置对应一个唯一的标识符和描述信息
@@ -1657,7 +1722,7 @@ class YoloGrabNode(Node):
         for key, info in place_locations.items():
             print(f"  {key}. {info['name']:10} - {info['description']}")
         
-        print("-" * 80)
+        print("-" * 50)
         
         # 循环获取有效的用户输入
         while True:
@@ -1677,9 +1742,116 @@ class YoloGrabNode(Node):
         
         这个方法让用户有时间查看程序的执行过程和输出
         """
-        print("-" * 80)
+        print("-" * 50)
         input("按 Enter 键继续检测下一个物体...")
         print("\n")
+    
+    def _publish_joint_command_to_gui(self, joint_state, group_name):
+        """发布关节命令到 /gui/joint_command 话题
+        
+        根据规划组（left_arm 或 right_arm）和IK解算结果，构建JSON格式的
+        关节命令消息并发布到GUI话题，用于控制机械臂运动。
+        
+        关节到电机ID的映射关系：
+        - left_arm:  7个关节（索引0-6）对应电机ID 11-17
+        - right_arm: 7个关节（索引0-6）对应电机ID 21-27
+        
+        Args:
+            joint_state (JointState): IK解算得到的关节状态
+                - joint_state.name: 关节名称列表
+                - joint_state.position: 关节角度列表（弧度）
+            group_name (str): 规划组名称，'left_arm' 或 'right_arm'
+        
+        Returns:
+            bool: True表示发布成功，False表示失败
+        
+        Raises:
+            ValueError: 如果规划组名称无效
+        
+        示例：
+            joint_state.name = ['shoulder_pitch_l_joint', ...]
+            joint_state.position = [0.5, 0.15, 0.1, -0.9, 0.2, 0.0, 0.0]
+            group_name = 'left_arm'
+            
+            发布的JSON: {"11": 0.5, "12": 0.15, "13": 0.1, "14": -0.9,
+                         "15": 0.2, "16": 0.0, "17": 0.0}
+        """
+        try:
+            # ============ 参数验证 ============
+            if group_name not in ['left_arm', 'right_arm']:
+                raise ValueError(f"无效的规划组名称: {group_name}，必须是 'left_arm' 或 'right_arm'")
+            
+            if not joint_state or not joint_state.name or not joint_state.position:
+                self.get_logger().error("joint_state 数据无效或为空")
+                return False
+            
+            # ============ 确定电机ID起始值 ============
+            # left_arm: 电机ID从11开始 (11-17)
+            # right_arm: 电机ID从21开始 (21-27)
+            motor_id_base = 11 if group_name == 'left_arm' else 21
+            
+            # ============ 获取该规划组的关节名称列表 ============
+            # 从 moveit 配置中获取，确保顺序正确
+            group_joint_names = self.group_joints.get(group_name, [])
+            
+            if not group_joint_names:
+                self.get_logger().error(f"未找到规划组 '{group_name}' 的关节配置")
+                return False
+            
+            # ============ 构建电机ID到角度的映射字典 ============
+            joint_command_dict = {}
+            
+            # 遍历该规划组的所有关节
+            for idx, joint_name in enumerate(group_joint_names):
+                # 在 joint_state 中查找该关节的角度值
+                if joint_name in joint_state.name:
+                    # 找到对应关节在 joint_state 中的索引
+                    joint_idx = joint_state.name.index(joint_name)
+                    joint_position = joint_state.position[joint_idx]
+                    
+                    # 计算对应的电机ID（关节索引 + 电机ID基础值）
+                    motor_id = motor_id_base + idx
+                    
+                    # 添加到命令字典（电机ID作为字符串key）
+                    joint_command_dict[str(motor_id)] = round(joint_position, 4)
+                else:
+                    self.get_logger().warn(
+                        f"关节 '{joint_name}' 未在 joint_state 中找到，跳过"
+                    )
+            
+            # ============ 检查是否有有效的关节命令 ============
+            if not joint_command_dict:
+                self.get_logger().error("未能构建有效的关节命令，所有关节都未匹配")
+                return False
+            
+            # ============ 将字典转换为JSON字符串 ============
+            import json
+            json_str = json.dumps(joint_command_dict, ensure_ascii=False)
+            
+            # ============ 创建ROS String消息并发布 ============
+            msg = String()
+            msg.data = json_str
+            
+            self.joint_command_pub.publish(msg)
+            
+            # ============ 日志输出 ============
+            self.get_logger().info("=" * 50)
+            self.get_logger().info("✓ 已发布关节命令到 /gui/joint_command")
+            self.get_logger().info(f"  规划组: {group_name}")
+            self.get_logger().info(f"  电机数: {len(joint_command_dict)}")
+            self.get_logger().info(f"  JSON命令: {json_str}")
+            self.get_logger().info("=" * 50)
+            
+            return True
+            
+        except ValueError as ve:
+            self.get_logger().error(f"参数验证失败: {str(ve)}")
+            return False
+        except Exception as e:
+            self.get_logger().error(f"发布关节命令失败: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return False
     
     def _resume_image_processing(self):
         """恢复图像处理 - 解除 synchronized_image_cb 的暂停状态
@@ -1724,13 +1896,23 @@ class YoloGrabNode(Node):
         # 创建PoseStamped消息
         pose_stamped = PoseStamped()
         pose_stamped.header.stamp = self.get_clock().now().to_msg()
-        pose_stamped.pose.orientation.w = 1.0  # 无旋转
+        # pose_stamped.pose.orientation.w = 1.0  # 无旋转
+                
+        # 四元数（从tf2_echo读取）- 必须归一化
+        # q = [0.129, -0.147, -0.012, 0.981]
+        q = [-0.041, 0.712, -0.690, 0.121]
+        # q_norm = np.linalg.norm(q)
+        # q = [x / q_norm for x in q]  # 归一化
+        pose_stamped.pose.orientation.x = q[0]
+        pose_stamped.pose.orientation.y = q[1]
+        pose_stamped.pose.orientation.z = q[2]
+        pose_stamped.pose.orientation.w = q[3]
         
         if coords_base['success']:
             # 变换成功：使用基座坐标系
             pose_stamped.header.frame_id = coords_base['frame_id']
             pose_stamped.pose.position.x = coords_base['X']
-            pose_stamped.pose.position.y = coords_base['Y']
+            pose_stamped.pose.position.y = coords_base['Y']# + 0.05
             pose_stamped.pose.position.z = coords_base['Z']
             
             # self.get_logger().info(
@@ -1738,6 +1920,15 @@ class YoloGrabNode(Node):
             #     f"X={coords_base['X']:.3f}m, Y={coords_base['Y']:.3f}m, Z={coords_base['Z']:.3f}m"
             # )
         
+            # ============ 检查是否已在处理IK结果 ============
+            # 如果已经有IK解算成功并在等待用户确认，则忽略新的IK请求
+            # 这样可以避免多个IK解算结果同时输出
+            with self.ik_result_lock:
+                if self.pause_image_processing:
+                    # 已经在处理IK结果，忽略本次请求
+                    # self.get_logger().info("⚠ 已有IK结果在处理中，忽略新的IK请求")
+                    return
+            
             # ============ 异步 IK 解算 ============
             # 不阻塞当前回调，异步处理 IK 结果
             future_id = self.compute_ik_for_grasp(pose_stamped, group_name="left_arm")
@@ -1757,12 +1948,12 @@ class YoloGrabNode(Node):
                 f"⚠ 无法变换到 {self.target_frame}: {coords_base['error']}"
             )
         
-        self.pub.publish(pose_stamped)
+        self.grasp_pose_pub.publish(pose_stamped)
         # self.get_logger().info(
         #     f"✓ 已发布抓取点在 {pose_stamped.header.frame_id} 坐标系下的坐标 | "
         #     f"检测到 {num_detections} 个物体"
         # )
-        # self.get_logger().info("-" * 70)
+        # self.get_logger().info("-" * 50)
 
     def draw_depth_info_on_depth_image(self, img, center_x, center_y, depth_meters):
         """在深度图上绘制中心点标记和深度值
@@ -1926,10 +2117,11 @@ class YoloGrabNode(Node):
         )
 
         if len(results[0].boxes) == 0:
-            self.get_logger().info("No objects detected")
-            self.get_logger().info("-" * 70)
+            # self.get_logger().info("No objects detected")
+            # self.get_logger().info("-" * 50)
             # 未检测到物体时保存彩色原始图片备查
             self.save_image(color_img, timestamp, suffix="raw_color")
+            self.save_image(depth_colored, timestamp, suffix="raw_depth")
         
             return
 
@@ -2013,7 +2205,7 @@ class YoloGrabNode(Node):
         # 检查坐标转换是否成功，如果失败则忽略本次数据直接返回
         if not coords_3d_camera_frame.get('valid', False):
             self.get_logger().warn(f"⚠ 3D坐标转换失败：{coords_3d_camera_frame.get('error', '未知错误')}。忽略本帧数据，进行下次检测。")
-            self.get_logger().info("-" * 70)
+            self.get_logger().info("-" * 50)
             return
         
         # 发布抓取点位姿
@@ -2021,7 +2213,7 @@ class YoloGrabNode(Node):
             self.publish_grasp_pose(coords_3d_camera_frame, (cx, cy, cz_raw, cz), len(results[0].boxes))
         except Exception as e:
             self.get_logger().error(f"发布抓取点失败: {str(e)}")
-            self.get_logger().info("-" * 70)
+            self.get_logger().info("-" * 50)
 
 
 def main():

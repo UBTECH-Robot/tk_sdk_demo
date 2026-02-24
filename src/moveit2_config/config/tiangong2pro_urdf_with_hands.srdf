@@ -10,34 +10,20 @@
     <!--CHAINS: When a chain is specified, all the links along the chain (including endpoints) are included in the group. Additionally, all the joints that are parents to included links are also included. This means that joints along the chain and the parent joint of the base link are included in the group-->
     <!--SUBGROUPS: Groups can also be formed by referencing to already defined group names-->
     <group name="left_arm">
-        <joint name="shoulder_pitch_l_joint"/>
-        <joint name="shoulder_roll_l_joint"/>
-        <joint name="shoulder_yaw_l_joint"/>
-        <joint name="elbow_pitch_l_joint"/>
-        <joint name="elbow_yaw_l_joint"/>
-        <joint name="wrist_pitch_l_joint"/>
-        <joint name="wrist_roll_l_joint"/>
-        <joint name="left_tcp_joint"/>
+        <chain base_link="pelvis" tip_link="L_base_link"/>
     </group>
     <group name="left_hand">
-        <link name="left_tcp_link"/>
+        <link name="L_base_link"/>
     </group>
     <group name="right_arm">
-        <joint name="shoulder_pitch_r_joint"/>
-        <joint name="shoulder_roll_r_joint"/>
-        <joint name="shoulder_yaw_r_joint"/>
-        <joint name="elbow_pitch_r_joint"/>
-        <joint name="elbow_yaw_r_joint"/>
-        <joint name="wrist_pitch_r_joint"/>
-        <joint name="wrist_roll_r_joint"/>
-        <joint name="right_tcp_joint"/>
+        <chain base_link="pelvis" tip_link="R_base_link"/>
     </group>
     <group name="right_hand">
-        <link name="right_tcp_link"/>
+        <link name="R_base_link"/>
     </group>
     <!--END EFFECTOR: Purpose: Represent information about an end effector.-->
-    <end_effector name="left_ee" parent_link="left_tcp_link" group="left_hand" parent_group="left_arm"/>
-    <end_effector name="right_ee" parent_link="right_tcp_link" group="right_hand" parent_group="right_arm"/>
+    <end_effector name="left_ee" parent_link="L_base_link" group="left_hand" parent_group="left_arm"/>
+    <end_effector name="right_ee" parent_link="R_base_link" group="right_hand" parent_group="right_arm"/>
     <!--VIRTUAL JOINT: Purpose: this element defines a virtual joint between a robot link and an external frame of reference (considered fixed with respect to the robot)-->
     <virtual_joint name="virtual_base" type="fixed" parent_frame="world" child_link="pelvis"/>
     <!--DISABLE COLLISIONS: By default it is assumed that any link of the robot could potentially come into collision with any other link in the robot. This tag disables collision checking between a specified pair of links. -->

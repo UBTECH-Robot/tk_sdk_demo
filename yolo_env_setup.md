@@ -140,3 +140,14 @@ ros2 run grab_demo yolo_grab_node --target_classes apple
 ros2 run topic_tools relay /camera/color/image_raw /ob_camera_head/color/image_raw & \
 ros2 run topic_tools relay /camera/depth/image_raw /ob_camera_head/depth/image_raw & \
 ros2 run topic_tools relay /camera/depth/camera_info /ob_camera_head/depth/camera_info &
+
+查询末端位姿：
+ros2 run tf2_ros tf2_echo pelvis left_tcp_link
+<!-- ros2 run tf2_ros tf2_echo pelvis L_base_link -->
+其中的输出：
+Rotation: in Quaternion [0.129, -0.147, -0.012, 0.981]
+Rotation: in Quaternion [0.171, -0.246, -0.114, 0.947]
+<!-- Rotation: in Quaternion [-0.109, 0.716, -0.663, 0.192] -->
+Rotation: in Quaternion [-0.041, 0.712, -0.690, 0.121]
+
+表示对应坐标系的姿态

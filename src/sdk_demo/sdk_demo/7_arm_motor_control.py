@@ -9,6 +9,8 @@
 使用方法(要先确保机器人是固定在移位机上，本体服务是启动着的，但是不能启动运控服务，也就是手动关掉 proc_manager 服务后再执行 ros2 launch body_control body.launch.py)：
     执行位置控制模式示例（默认）：
         ros2 run sdk_demo arm_motor_control pos
+        # 直接用ros命令控制的示例：
+        # ros2 topic pub /arm/cmd_pos bodyctrl_msgs/msg/CmdSetMotorPosition "{cmds: [{name: 17, pos: 0.6024, spd: 0.2, cur: 8.0 }]}"
     
     执行力位混合控制模式示例：
         ros2 run sdk_demo arm_motor_control imp
