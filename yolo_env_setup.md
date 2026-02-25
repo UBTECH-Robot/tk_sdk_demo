@@ -151,3 +151,25 @@ Rotation: in Quaternion [0.171, -0.246, -0.114, 0.947]
 Rotation: in Quaternion [-0.041, 0.712, -0.690, 0.121]
 
 表示对应坐标系的姿态
+
+
+直接发布IK解算结果到rviz的画面：
+json='{"11": 0.1049, "12": 0.7222, "13": -0.2608, "14": -1.9894, "15": 0.6162, "16": 0.0082, "17": -0.2157}'
+ros2 topic pub /gui/joint_command std_msgs/msg/String "{data: '$json'}"
+
+
+直接用目标点的位姿调用IK解算接口：
+ros2 service call /compute_ik moveit_msgs/srv/GetPositionIK "
+{
+  ik_request: {
+    group_name: 'left_arm',
+    pose_stamped: {
+      header: { frame_id: 'pelvis' },
+      pose: {
+        position: { x: 0.402417, y: 0.024490, z: 0.159641 },
+        orientation: { x: -0.041, y: 0.712, z: -0.690, w: 0.121 }
+      }
+    },
+    timeout: { sec: 2 }
+  }
+}"

@@ -547,7 +547,7 @@ class YoloGrabNode(Node):
                 print(f"[ERROR] 解析目标坐标系参数失败: {e}，使用默认值: {target_frame}")
         else:
             print(f"[INFO] 未指定 --target_frame 参数，使用默认值: {target_frame}")
-            print(f"[INFO] 使用方法: ros2 run grab_demo yolo_grab_node --target_frame L_base_link")
+            # print(f"[INFO] 使用方法: ros2 run grab_demo yolo_grab_node --target_frame L_base_link")
         
         return target_frame
 
@@ -654,8 +654,8 @@ class YoloGrabNode(Node):
         # 常见的有：
         # - binning_x 可能存储深度缩放因子
         # - binning_y 可能存储其他信息
-        self.get_logger().info(f"Binning X (可能包含深度缩放信息): {msg.binning_x}")
-        self.get_logger().info(f"Binning Y: {msg.binning_y}")
+        # self.get_logger().info(f"Binning X (可能包含深度缩放信息): {msg.binning_x}")
+        # self.get_logger().info(f"Binning Y: {msg.binning_y}")
         
         # ROI (Region of Interest) 信息
         # self.get_logger().info(f"ROI: {msg.roi}")
@@ -1376,22 +1376,17 @@ class YoloGrabNode(Node):
                 self.get_logger().info(f"✓ IK解算成功 (group: {group_name})")
                 self.get_logger().info(f"解算耗时: {elapsed_time*1000:.2f}ms")
                 self.get_logger().info(f"目标坐标系: {target_pose.header.frame_id}")
-                self.get_logger().info(f"目标位置: X={target_pose.pose.position.x:.6f}, Y={target_pose.pose.position.y:.6f}, Z={target_pose.pose.position.z:.6f}")
+                self.get_logger().info(f"目标位置: x={target_pose.pose.position.x:.6f}, y={target_pose.pose.position.y:.6f}, z={target_pose.pose.position.z:.6f}")
                 self.get_logger().info(f"目标姿态: x={target_pose.pose.orientation.x:.6f}, y={target_pose.pose.orientation.y:.6f}, z={target_pose.pose.orientation.z:.6f}, w={target_pose.pose.orientation.w:.6f}")
-                self.get_logger().info("关节角度解算结果:")
+                # self.get_logger().info("关节角度解算结果:")
                 
-                # 只显示该规划组相关的关节
-                group_joint_names = self.group_joints.get(group_name, [])
-                for name, pos in zip(joint_state.name, joint_state.position):
-                    if name in group_joint_names:
-                        self.get_logger().info(f"  {name}: {pos:.4f} rad ({np.degrees(pos):.2f}°)")
+                # # 只显示该规划组相关的关节
+                # group_joint_names = self.group_joints.get(group_name, [])
+                # for name, pos in zip(joint_state.name, joint_state.position):
+                #     if name in group_joint_names:
+                #         self.get_logger().info(f"  {name}: {pos:.4f} rad ({np.degrees(pos):.2f}°)")
                 
                 self.get_logger().info("")
-                self.get_logger().info("验证提示：")
-                self.get_logger().info("  1. 应用上述关节角度到机械臂")
-                self.get_logger().info("  2. 运行: ros2 run tf2_ros tf2_echo pelvis L_base_link")
-                self.get_logger().info("  3. 比较实际姿态与上述目标姿态的差异")
-                self.get_logger().info("=" * 50)
                 
                 # ============ 保存IK结果并暂停图像处理 ============
                 # 使用线程锁保护共享变量的访问，避免竞态条件
@@ -1901,8 +1896,8 @@ class YoloGrabNode(Node):
         # 四元数（从tf2_echo读取）- 必须归一化
         # q = [0.129, -0.147, -0.012, 0.981]
         q = [-0.041, 0.712, -0.690, 0.121]
-        # q_norm = np.linalg.norm(q)
-        # q = [x / q_norm for x in q]  # 归一化
+        q_norm = np.linalg.norm(q)
+        q = [x / q_norm for x in q]  # 归一化
         pose_stamped.pose.orientation.x = q[0]
         pose_stamped.pose.orientation.y = q[1]
         pose_stamped.pose.orientation.z = q[2]
@@ -1912,12 +1907,13 @@ class YoloGrabNode(Node):
             # 变换成功：使用基座坐标系
             pose_stamped.header.frame_id = coords_base['frame_id']
             pose_stamped.pose.position.x = coords_base['X']
-            pose_stamped.pose.position.y = coords_base['Y']# + 0.05
+            pose_stamped.pose.position.y = coords_base['Y'] #+ 0.1
             pose_stamped.pose.position.z = coords_base['Z']
             
             # self.get_logger().info(
-            #     f"✓ 抓取点在 ({coords_base['frame_id']}) 坐标系内的坐标: "
-            #     f"X={coords_base['X']:.3f}m, Y={coords_base['Y']:.3f}m, Z={coords_base['Z']:.3f}m"
+            #     f"✓ 抓取点在 ({coords_base['frame_id']}) 坐标系内的坐标，将进行IK解算: \n"
+            #     f"x: {coords_base['X']}, y: {coords_base['Y']}, z: {coords_base['Z']}\n"
+            #     f"X={coords_base['X']:.3f}m, Y={coords_base['Y']:.3f}m, Z={coords_base['Z']:.3f}m\n"
             # )
         
             # ============ 检查是否已在处理IK结果 ============

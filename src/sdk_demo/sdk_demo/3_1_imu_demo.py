@@ -65,7 +65,7 @@ class ImuSubscriber(Node):
         msg 的主要属性结构：
             - header (std_msgs/Header)：消息头，包含时间戳和坐标系信息
               * stamp (Time)：消息时间戳（秒和纳秒）
-              * frame_id (str)：坐标系 ID，如 "imu_link"
+              * frame_id (str)：坐标系 ID，如 "imu"
             
             - orientation (geometry_msgs/Quaternion)：姿态四元数
               * x, y, z, w (float64)：四元数分量（单位：无）
