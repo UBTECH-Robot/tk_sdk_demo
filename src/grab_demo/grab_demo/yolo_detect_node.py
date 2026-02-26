@@ -134,7 +134,7 @@ class YoloDetectNode(Node):
         - 创建保存目录
         """
         # 发布静态TF变换
-        self.publish_static_transform()
+        # self.publish_static_transform()
         
         # 初始化 CvBridge，用于ROS图像消息与OpenCV格式的转换
         self.bridge = CvBridge()
@@ -336,36 +336,36 @@ class YoloDetectNode(Node):
         self.get_logger().info("✓ 抓取候选点发布者已创建（/grasp_candidate）")
 
 
-    def publish_static_transform(self):
-        """
-        发布静态TF变换：camera_head_link -> ob_camera_head_link
-        对应命令：ros2 run tf2_ros static_transform_publisher 0.0 0.0 0.0 0 0 0 1 camera_head_link ob_camera_head_link
-        """
-        static_broadcaster = StaticTransformBroadcaster(self)
+    # def publish_static_transform(self):
+    #     """
+    #     发布静态TF变换：camera_head_link -> ob_camera_head_link
+    #     对应命令：ros2 run tf2_ros static_transform_publisher 0.0 0.0 0.0 0 0 0 1 camera_head_link ob_camera_head_link
+    #     """
+    #     static_broadcaster = StaticTransformBroadcaster(self)
         
-        # 创建变换消息
-        static_transform = TransformStamped()
-        static_transform.header.stamp = self.get_clock().now().to_msg()
-        static_transform.header.frame_id = "camera_head_link"
-        static_transform.child_frame_id = "ob_camera_head_link"
+    #     # 创建变换消息
+    #     static_transform = TransformStamped()
+    #     static_transform.header.stamp = self.get_clock().now().to_msg()
+    #     static_transform.header.frame_id = "camera_head_link"
+    #     static_transform.child_frame_id = "ob_camera_head_link"
         
-        # 设置位移（平移）：(0.0, 0.0, 0.0)
-        static_transform.transform.translation.x = 0.0
-        static_transform.transform.translation.y = 0.0
-        static_transform.transform.translation.z = 0.0
+    #     # 设置位移（平移）：(0.0, 0.0, 0.0)
+    #     static_transform.transform.translation.x = 0.0
+    #     static_transform.transform.translation.y = 0.0
+    #     static_transform.transform.translation.z = 0.0
         
-        # 设置旋转（四元数）：(0, 0, 0, 1)，表示无旋转
-        static_transform.transform.rotation.x = 0.0
-        static_transform.transform.rotation.y = 0.0
-        static_transform.transform.rotation.z = 0.0
-        static_transform.transform.rotation.w = 1.0
+    #     # 设置旋转（四元数）：(0, 0, 0, 1)，表示无旋转
+    #     static_transform.transform.rotation.x = 0.0
+    #     static_transform.transform.rotation.y = 0.0
+    #     static_transform.transform.rotation.z = 0.0
+    #     static_transform.transform.rotation.w = 1.0
         
-        # 发送静态变换
-        static_broadcaster.sendTransform(static_transform)
+    #     # 发送静态变换
+    #     static_broadcaster.sendTransform(static_transform)
         
-        self.get_logger().info(
-            f"✓ 静态TF变换已发布: camera_head_link -> ob_camera_head_link"
-        )
+    #     self.get_logger().info(
+    #         f"✓ 静态TF变换已发布: camera_head_link -> ob_camera_head_link"
+    #     )
     
     def _parse_target_classes_from_args(self):
         """
@@ -1351,8 +1351,8 @@ class YoloDetectNode(Node):
             # self.get_logger().info("No objects detected")
             # self.get_logger().info("-" * 50)
             # 未检测到物体时保存彩色原始图片备查
-            self.save_image(color_img, timestamp, suffix="raw_color")
-            self.save_image(depth_colored, timestamp, suffix="raw_depth")
+            # self.save_image(color_img, timestamp, suffix="raw_color")
+            # self.save_image(depth_colored, timestamp, suffix="raw_depth")
         
             return
 
@@ -1361,7 +1361,7 @@ class YoloDetectNode(Node):
         # 如果未找到目标类别，filter_detections_by_target_classes() 会返回 False 并记录日志
         if not self.filter_detections_by_target_classes(results):
             # 未检测到物体时保存彩色原始图片备查
-            self.save_image(color_img, timestamp, suffix="raw_color")
+            # self.save_image(color_img, timestamp, suffix="raw_color")
         
             return
         
@@ -1416,7 +1416,7 @@ class YoloDetectNode(Node):
 
         # ============ 保存标注后的图像 ============
         # 保存带标注的彩色图
-        self.save_image(annotated_img, timestamp, suffix="detected_color")
+        # self.save_image(annotated_img, timestamp, suffix="detected_color")
         
         # 保存带标注的深度图
         # self.save_image(depth_annotated, timestamp, suffix="detected_depth")
@@ -1437,6 +1437,8 @@ class YoloDetectNode(Node):
         if not coords_3d_camera_frame.get('valid', False):
             self.get_logger().warn(f"⚠ 3D坐标转换失败：{coords_3d_camera_frame.get('error', '未知错误')}。忽略本帧数据，进行下次检测。")
             self.get_logger().info("-" * 50)
+            self.save_image(annotated_img, timestamp, suffix="detected_color")
+            self.save_image(depth_annotated, timestamp, suffix="detected_depth")
             return
         
         # 发布抓取点位姿
