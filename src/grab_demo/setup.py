@@ -19,6 +19,9 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'yolo_detect_node = grab_demo.yolo_detect_node:main',
+            'grasp_executor_node = grab_demo.grasp_executor_node:main',
+            # 保留旧节点入口，不再使用但暂不删除
             'yolo_grab_node = grab_demo.yolo_grab_node:main',
             'ik_client_node = grab_demo.ik_client_node:ros_main',
         ],

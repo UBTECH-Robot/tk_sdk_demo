@@ -12,8 +12,8 @@ import math
 from bodyctrl_msgs.msg import CmdSetMotorPosition, SetMotorPosition
 import time
 from tf2_ros import Buffer, TransformListener
-from tf2_ros import LookupException, ConnectivityException, ExtrapolationException
 from grab_demo_msgs.msg import IKRequest
+from grab_demo.pose_verification_mixin import PoseVerificationMixin
 
 prepare_pose = {
     "left_arm": [
@@ -31,7 +31,7 @@ prepare_pose = {
 VELOCITY_LIMIT = 0.4  # 速度限制（弧度/秒）
 CURRENT_LIMIT = 5.0  # 电流限制（安培）
 
-class IKClientNode(Node):
+class IKClientNode(PoseVerificationMixin, Node):
     def __init__(self):
         super().__init__('ik_client')
         self.client = self.create_client(GetPositionIK, '/compute_ik')
@@ -285,82 +285,6 @@ class IKClientNode(Node):
             self.get_logger().error(f'IK求解失败，错误码: {response.error_code.val}')
             return None
     
-    def compare_poses(self, pos1, quat1, pos2, quat2, 
-                      pos_threshold=None, angle_threshold=None,
-                      pos1_label="位姿1", pos2_label="位姿2"):
-        """
-        比较两个位姿的差异
-        
-        参数:
-            pos1: Point - 第一个位姿的位置
-            quat1: Quaternion/None - 第一个位姿的姿态（为None则不比较姿态）
-            pos2: Point - 第二个位姿的位置
-            quat2: Quaternion/None - 第二个位姿的姿态（为None则不比较姿态）
-            pos_threshold: float - 位置阈值(米)，设置后用于判断
-            angle_threshold: float - 角度阈值(度)，设置后用于判断
-            pos1_label: str - 位姿1的标签（用于日志）
-            pos2_label: str - 位姿2的标签（用于日志）
-        
-        返回: (is_within_threshold, pos_error_m, angle_diff_deg)
-            - is_within_threshold: bool/None (有阈值时返回判断结果，否则返回None)
-            - pos_error_m: float - 位置误差(米)
-            - angle_diff_deg: float/None - 角度误差(度)，无姿态时返回None
-        """
-        # 计算位置误差
-        pos_error = math.sqrt(
-            (pos1.x - pos2.x)**2 +
-            (pos1.y - pos2.y)**2 +
-            (pos1.z - pos2.z)**2
-        )
-        
-        # 输出位置信息
-        self.get_logger().info(f'{pos1_label}位置: [{pos1.x:.6f}, {pos1.y:.6f}, {pos1.z:.6f}]')
-        self.get_logger().info(f'{pos2_label}位置: [{pos2.x:.6f}, {pos2.y:.6f}, {pos2.z:.6f}]')
-        self.get_logger().info(f'位置误差: {pos_error:.6f} 米 ({pos_error*1000:.3f} 毫米)')
-        
-        angle_diff = None
-        
-        # 如果提供了四元数，计算姿态误差
-        if quat1 is not None and quat2 is not None:
-            # 归一化两个四元数
-            norm1 = math.sqrt(quat1.x**2 + quat1.y**2 + quat1.z**2 + quat1.w**2)
-            norm2 = math.sqrt(quat2.x**2 + quat2.y**2 + quat2.z**2 + quat2.w**2)
-            
-            q1_norm = Quaternion(
-                x=quat1.x/norm1, y=quat1.y/norm1, 
-                z=quat1.z/norm1, w=quat1.w/norm1
-            )
-            q2_norm = Quaternion(
-                x=quat2.x/norm2, y=quat2.y/norm2, 
-                z=quat2.z/norm2, w=quat2.w/norm2
-            )
-            
-            # 四元数点积
-            dot_product = (
-                q1_norm.x * q2_norm.x + 
-                q1_norm.y * q2_norm.y + 
-                q1_norm.z * q2_norm.z + 
-                q1_norm.w * q2_norm.w
-            )
-            angle_diff = 2 * math.acos(min(abs(dot_product), 1.0)) * 180 / math.pi
-            
-            # 输出姿态信息
-            self.get_logger().info(f'{pos1_label}姿态: [{q1_norm.x:.6f}, {q1_norm.y:.6f}, {q1_norm.z:.6f}, {q1_norm.w:.6f}]')
-            self.get_logger().info(f'{pos2_label}姿态: [{q2_norm.x:.6f}, {q2_norm.y:.6f}, {q2_norm.z:.6f}, {q2_norm.w:.6f}]')
-            self.get_logger().info(f'姿态角度差: {angle_diff:.3f} 度')
-        
-        # 判断是否在阈值内
-        is_within_threshold = None
-        if pos_threshold is not None:
-            pos_ok = pos_error < pos_threshold
-            if angle_threshold is not None and angle_diff is not None:
-                angle_ok = angle_diff < angle_threshold
-                is_within_threshold = pos_ok and angle_ok
-            else:
-                is_within_threshold = pos_ok
-        
-        return is_within_threshold, pos_error, angle_diff
-    
     def verify_ik_solution_with_fk(self, joint_positions_dict, response):
         """IK解算结果角度进行FK计算后的位姿与指定目标位姿对比"""
         self.get_logger().info('=== 开始FK验证IK解 ===')
@@ -412,50 +336,6 @@ class IKClientNode(Node):
                     self.get_logger().warn(f'⚠ IK解精度较低: 位置误差{pos_error*1000:.1f}mm, 角度差{angle_diff:.1f}°')
             else:
                 self.get_logger().error(f'FK求解失败: {fk_response.error_code.val}')
-    
-    def get_current_end_effector_transform(self, base_frame='pelvis', max_retries=5):
-        """
-        获取当前末端执行器的TF2变换
-        
-        返回: (transform, actual_pos, actual_quat) 或 (None, None, None)
-        """
-        try:
-            transform = None
-            for attempt in range(max_retries):
-                for _ in range(10):
-                    rclpy.spin_once(self, timeout_sec=0.2)
-                
-                try:
-                    transform = self.tf_buffer.lookup_transform(
-                        base_frame,
-                        'L_base_link',
-                        rclpy.time.Time(),
-                        timeout=rclpy.duration.Duration(seconds=1.0)
-                    )
-                    break
-                except (LookupException, ConnectivityException, ExtrapolationException) as e:
-                    if attempt < max_retries - 1:
-                        self.get_logger().debug(f'TF查询重试 {attempt + 1}/{max_retries}...')
-                        for _ in range(10):
-                            rclpy.spin_once(self, timeout_sec=0.2)
-                    else:
-                        raise
-            
-            if transform is None:
-                self.get_logger().error(f'无法获取 {base_frame} → L_base_link 变换')
-                return None, None, None
-            
-            # 提取位置和姿态
-            actual_pos = transform.transform.translation
-            actual_quat = transform.transform.rotation
-            return transform, actual_pos, actual_quat
-            
-        except (LookupException, ConnectivityException, ExtrapolationException) as e:
-            self.get_logger().error(f'TF2查询失败: {e}')
-            return None, None, None
-        except Exception as e:
-            self.get_logger().error(f'TF2查询异常: {e}')
-            return None, None, None
     
     def verify_execution(self, target_joint_positions_dict):
         """验证关节是否真的移动到了目标位置"""
@@ -518,7 +398,7 @@ class IKClientNode(Node):
             )
         
         # 查询实际末端位置（通过TF2）
-        self.verify_end_effector_position()
+        self.verify_end_effector_position(self.target_position, self.target_orientation, self.frame_id)
         
         # 关键验证：执行后再次检查FK与TF2是否一致
         self.get_logger().info('=== 关键诊断：执行后FK vs TF2验证 ===')
@@ -528,10 +408,10 @@ class IKClientNode(Node):
         """末端真实TF2位姿与用当前角度FK计算结果位姿对比"""
         self.get_logger().info('使用当前实际关节状态验证FK与TF2...')
         
-        base_frame = self.base_frame
+        base_frame = self.frame_id
         
         # 1. 获取TF2当前位置（使用辅助方法）
-        transform, tf_pos, tf_quat = self.get_current_end_effector_transform(base_frame, max_retries=3)
+        transform, tf_pos, tf_quat = self.get_current_end_effector_transform(base_frame, 'L_base_link', max_retries=3)
         if transform is None:
             return
         
@@ -577,39 +457,6 @@ class IKClientNode(Node):
                     )
             else:
                 self.get_logger().error(f'FK求解失败: {fk_response.error_code.val}')
-    
-    def verify_end_effector_position(self):
-        """末端真实TF2位姿与指定目标位姿对比"""
-        self.get_logger().info('=== TF2查询实际末端位置 ===')
-        
-        base_frame = self.base_frame
-        
-        # 获取TF2当前位置（使用辅助方法）
-        transform, actual_pos, actual_quat = self.get_current_end_effector_transform(base_frame)
-        if transform is None:
-            return
-        
-        self.get_logger().info(f'参考坐标系: {base_frame}')
-        
-        # 使用公共方法比较位姿
-        is_ok, pos_error, angle_diff = self.compare_poses(
-            actual_pos, actual_quat,
-            self.target_position, self.target_orientation,
-            pos_threshold=0.005, angle_threshold=5.0,
-            pos1_label="TF2实际末端",
-            pos2_label="IK目标"
-        )
-        
-        # 根据结果输出日志
-        if is_ok:
-            self.get_logger().info('✓ 末端位置验证通过！执行成功！')
-        else:
-            self.get_logger().error(
-                f'✗ 末端位置误差过大！\n'
-                f'  位置差: {pos_error*1000:.1f}mm (阈值: 5mm)\n'
-                f'  角度差: {angle_diff:.1f}° (阈值: 5°)\n'
-                f'  → 可能的问题：IK求解精度不足或关节控制未到位'
-            )
     
     def create_header(self):
         """

@@ -13,7 +13,8 @@ find_package(geometry_msgs REQUIRED)
 # 声明消息文件
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/IKRequest.msg"
-  DEPENDENCIES geometry_msgs
+  "msg/GraspCandidate.msg"
+  DEPENDENCIES geometry_msgs std_msgs
 )
 
 ament_package()
