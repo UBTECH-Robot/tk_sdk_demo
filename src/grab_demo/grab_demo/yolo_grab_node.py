@@ -25,6 +25,8 @@ from bodyctrl_msgs.msg import (
 from std_msgs.msg import Header, String
 import threading
 from queue import Queue
+from grab_demo_msgs.msg import IKRequest
+
 # from tf_transformations import quaternion_from_euler
 # import math
 
@@ -408,17 +410,7 @@ class YoloGrabNode(Node):
 
     def _init_moveit_ik_service(self):
         """初始化 MoveIt2 IK服务配置
-        
-        包括：
-        - 创建 IK 服务客户端
-        - 订阅当前机器人关节状态
-        - 初始化异步 IK 处理
         """
-        # MoveIt2 IK服务客户端
-        # 用于调用逆运动学解算服务
-        self.ik_client = self.create_client(GetPositionIK, '/compute_ik')
-        # self.get_logger().info("等待 /compute_ik 服务...")
-        
         # 订阅当前机器人状态
         # IK服务需要当前的机器人关节状态作为初始配置
         self.current_joint_state = None
@@ -430,9 +422,9 @@ class YoloGrabNode(Node):
         )
         self.get_logger().info("已订阅 /joint_states 话题")
         
-        # IK 异步处理
-        # 用于在回调中异步处理 IK 服务结果
-        self.pending_ik_futures = {}
+        self.ik_and_move_publisher = self.create_publisher(IKRequest, '/ik_request', 10)
+        self.get_logger().info("已创建 /ik_request 话题发布者")
+
 
     def publish_static_transform(self):
         """
@@ -1232,99 +1224,16 @@ class YoloGrabNode(Node):
                 'X': None, 'Y': None, 'Z': None
             }
     
-    def compute_ik_for_grasp(self, target_pose_stamped, group_name="left_arm"):
-        """异步调用MoveIt2的IK服务解算抓取位姿
-        
-        不在回调中阻塞等待，而是注册异步完成回调
-        
-        IK精度说明：
-        ============
-        如果IK解算的关节角度应用到机械臂后，末端姿态与目标姿态有偏差，可能的原因包括：
-        
-        1. **求解器精度限制**：
-           - KDL求解器使用数值方法，存在数值误差
-           - kinematics.yaml中的search_resolution和timeout影响求解精度
-           - 已优化：search_resolution=0.001, timeout=0.05s, attempts=10
-        
-        2. **约束容差设置**：
-           - position_tolerance: 位置误差容忍度（默认0.0001m = 0.1mm）
-           - orientation_tolerance: 姿态误差容忍度（默认0.001rad ≈ 0.057°）
-           - 需要在精度和求解成功率之间平衡
-        
-        3. **关节限制影响**：
-           - 关节角度限制可能阻止求解器找到精确解
-           - 避免碰撞约束可能限制解的精度
-        
-        4. **URDF/SRDF配置**：
-           - 确保L_base_link是正确的末端执行器链接
-           - 检查DH参数和变换矩阵是否准确
-        
-        5. **坐标系一致性**：
-           - IK求解使用的坐标系必须与目标姿态的frame_id一致
-           - 默认使用pelvis坐标系，通过--target_frame参数可修改
-        
-        验证方法：
-        - 应用IK解算的关节角度后，运行：
-          ros2 run tf2_ros tf2_echo pelvis L_base_link
-        - 比较实际姿态与目标姿态的差异
-        
-        优化建议：
-        - 如果精度不足，可以尝试增加kinematics.yaml中的timeout
-        - 调整约束容差（在代码中修改position/orientation_constraint）
-        - 使用不同的IK求解器（如TracIK、IKFAST）
-        
-        Args:
-            target_pose_stamped (PoseStamped): 目标抓取位姿
-            group_name (str): MoveIt规划组名称
-        
-        Returns:
-            str: future 的 ID，用于追踪异步结果（或失败消息）
-        """
-        # 检查前置条件
-        if self.current_joint_state is None:
-            self.get_logger().warn('⚠ 尚未接收到关节状态，无法调用 IK 服务')
-            return None
-        
-        if not self.ik_client.service_is_ready():
-            self.get_logger().warn('⚠ /compute_ik 服务不可用')
-            return None
-        
-        try:
-            # 构建 IK 请求
-            request = GetPositionIK.Request()
-            request.ik_request.group_name = group_name
-            request.ik_request.pose_stamped = target_pose_stamped
-            request.ik_request.robot_state = RobotState()
-            request.ik_request.robot_state.joint_state = self.current_joint_state
-            request.ik_request.timeout.sec = 5
-            request.ik_request.avoid_collisions = True
-            
-            # 注意：Constraints中的position/orientation约束主要用于路径规划
-            # KDL求解器通过pose_stamped中的完整姿态（位置+四元数）来求解IK
-            # 确保pose_stamped包含正确的位置和归一化的四元数
-            
-            # self.get_logger().info(f"发送异步 IK 请求: group={group_name}, frame={target_pose_stamped.header.frame_id}")
-            
-            # 异步调用 - 不阻塞，直接返回 future
-            future = self.ik_client.call_async(request)
-            
-            # 为 future 添加完成回调
-            future_id = id(future)
-            self.pending_ik_futures[future_id] = {
-                'future': future,
-                'group_name': group_name,
-                'pose': target_pose_stamped,
-                'start_time': time.time()  # 记录请求发送时间
-            }
-            
-            # 注册完成回调
-            future.add_done_callback(lambda f: self._ik_done_callback(future_id))
-            
-            return future_id
-            
-        except Exception as e:
-            self.get_logger().error(f"IK 服务异步调用异常: {str(e)}")
-            return None
+    def call_ik_and_move(self, target_pose_stamped, group_name="left_arm"):
+        """异步调用MoveIt2的IK服务解算抓取位姿"""
+
+        ik_req = IKRequest()
+        ik_req.group_name = group_name
+        ik_req.frame_id = 'pelvis'
+        ik_req.position = target_pose_stamped.pose.position
+        ik_req.orientation = target_pose_stamped.pose.orientation
+        self.ik_and_move_publisher.publish(ik_req)
+        return
     
     def _ik_done_callback(self, future_id):
         """IK 服务异步完成回调 - 在IK解算成功时暂停图像处理并等待用户确认
@@ -1925,9 +1834,6 @@ class YoloGrabNode(Node):
                     # self.get_logger().info("⚠ 已有IK结果在处理中，忽略新的IK请求")
                     return
             
-            # ============ 异步 IK 解算 ============
-            # 不阻塞当前回调，异步处理 IK 结果
-            future_id = self.compute_ik_for_grasp(pose_stamped, group_name="left_arm")
             # if future_id is not None:
             #     self.get_logger().info(f"✓ 已提交 IK 请求（异步处理，future_id={future_id}）")
             # else:
@@ -1945,6 +1851,7 @@ class YoloGrabNode(Node):
             )
         
         self.grasp_pose_pub.publish(pose_stamped)
+        return pose_stamped
         # self.get_logger().info(
         #     f"✓ 已发布抓取点在 {pose_stamped.header.frame_id} 坐标系下的坐标 | "
         #     f"检测到 {num_detections} 个物体"
@@ -2205,11 +2112,16 @@ class YoloGrabNode(Node):
             return
         
         # 发布抓取点位姿
+        pose_stamped = None
         try:
-            self.publish_grasp_pose(coords_3d_camera_frame, (cx, cy, cz_raw, cz), len(results[0].boxes))
+            pose_stamped = self.publish_grasp_pose(coords_3d_camera_frame, (cx, cy, cz_raw, cz), len(results[0].boxes))
         except Exception as e:
             self.get_logger().error(f"发布抓取点失败: {str(e)}")
             self.get_logger().info("-" * 50)
+        
+        # ============ 异步 IK 解算 ============
+        if pose_stamped is not None:
+            self.call_ik_and_move(pose_stamped, group_name="left_arm")
 
 
 def main():

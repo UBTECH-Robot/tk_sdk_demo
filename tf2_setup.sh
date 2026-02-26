@@ -18,6 +18,7 @@ ros2 run tf2_ros static_transform_publisher 0.0 0.0 0.0 0 0 0 1 camera_head_link
 # 4. 查看具体的两个坐标系之间的变换
 # ros2 run tf2_ros tf2_echo L_base_link ob_camera_head_depth_optical_frame
 # ros2 run tf2_ros tf2_echo R_base_link ob_camera_head_depth_optical_frame
+# ros2 run tf2_ros tf2_echo pelvis L_base_link
 
 # 5. 在终端查看所有活跃的TF坐标系
 # ros2 run tf2_ros tf2_monitor

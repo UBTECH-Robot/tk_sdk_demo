@@ -20,6 +20,7 @@ setup(
     entry_points={
         'console_scripts': [
             'yolo_grab_node = grab_demo.yolo_grab_node:main',
+            'ik_client_node = grab_demo.ik_client_node:ros_main',
         ],
     },
 )

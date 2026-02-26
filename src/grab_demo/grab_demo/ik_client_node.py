@@ -9,15 +9,11 @@ from sensor_msgs.msg import JointState
 from moveit_msgs.msg import RobotState
 from std_msgs.msg import Header, String
 import math
-from bodyctrl_msgs.msg import (
-    CmdSetMotorPosition, SetMotorPosition,
-    CmdMotorCtrl, MotorCtrl,
-    CmdSetMotorSpeed, SetMotorSpeed
-)
+from bodyctrl_msgs.msg import CmdSetMotorPosition, SetMotorPosition
 import time
 from tf2_ros import Buffer, TransformListener
 from tf2_ros import LookupException, ConnectivityException, ExtrapolationException
-from tf2_geometry_msgs import do_transform_pose
+from grab_demo_msgs.msg import IKRequest
 
 prepare_pose = {
     "left_arm": [
@@ -35,9 +31,9 @@ prepare_pose = {
 VELOCITY_LIMIT = 0.4  # 速度限制（弧度/秒）
 CURRENT_LIMIT = 5.0  # 电流限制（安培）
 
-class IKTestClient(Node):
+class IKClientNode(Node):
     def __init__(self):
-        super().__init__('ik_test_client')
+        super().__init__('ik_client')
         self.client = self.create_client(GetPositionIK, '/compute_ik')
         self.fk_client = self.create_client(GetPositionFK, '/compute_fk')
         
@@ -62,6 +58,14 @@ class IKTestClient(Node):
         self.joint_command_pub = self.create_publisher(String, "/gui/joint_command", 10)
         self.get_logger().info("✓ GUI关节命令发布者已创建（话题：/gui/joint_command）")
 
+        # 订阅IKRequest话题
+        self.ik_request_sub = self.create_subscription(
+            IKRequest,
+            '/ik_request',
+            self.ik_request_callback,
+            10
+        )
+        self.get_logger().info("✓ 已订阅 /ik_request 话题")
 
         # 定义目标位姿
         self.target_position = Point(x=0.374878, y=0.047079, z=0.310416)
@@ -73,6 +77,56 @@ class IKTestClient(Node):
     
     def joint_states_callback(self, msg):
         self.current_joint_state = msg
+
+    def ik_request_callback(self, msg):
+        """接收IKRequest消息，执行IK求解并控制手臂"""
+        self.get_logger().info('=== 收到IK请求 ===')
+        self.get_logger().info(f'  group_name: {msg.group_name}')
+        self.get_logger().info(f'  frame_id: {msg.frame_id}')
+        self.get_logger().info(f'  position: [{msg.position.x:.6f}, {msg.position.y:.6f}, {msg.position.z:.6f}]')
+        self.get_logger().info(f'  orientation: [{msg.orientation.x:.6f}, {msg.orientation.y:.6f}, {msg.orientation.z:.6f}, {msg.orientation.w:.6f}]')
+        
+        self.target_position = msg.position
+        self.target_orientation = msg.orientation
+        self.frame_id = msg.frame_id
+
+        # 发布抓取位姿到RViz可视化
+        pose_msg = PoseStamped()
+        pose_msg.header.frame_id = msg.frame_id
+        pose_msg.header.stamp = self.get_clock().now().to_msg()
+        pose_msg.pose.position = msg.position
+        pose_msg.pose.orientation = msg.orientation
+        self.pose_publisher.publish(pose_msg)
+        
+        # 调用IK服务（使用消息中的参数）
+        response = self.call_ik_service_with_params(
+            msg.group_name,
+            msg.frame_id,
+            msg.position,
+            msg.orientation
+        )
+        
+        if response:
+            # 提取关节位置
+            joint_positions = self.extract_joint_positions(response)
+            
+            if joint_positions:
+                # 发布JSON命令到GUI
+                json_output = json.dumps(joint_positions)
+                self.get_logger().info(f'=== 发布关节命令 ===')
+                self.get_logger().info(f'JSON命令: {json_output}')
+                
+                gui_msg = String()
+                gui_msg.data = json_output
+                self.joint_command_pub.publish(gui_msg)
+                
+                # 控制手臂移动到目标位置
+                self.arm_to_pose(joint_positions, spd=VELOCITY_LIMIT/2)
+                self.get_logger().info('✓ IK求解完成，手臂已移动到目标位置')
+            else:
+                self.get_logger().error('✗ 提取关节位置失败')
+        else:
+            self.get_logger().error('✗ IK服务调用失败')
 
     def create_joint_state_from_motor_dict(self, motor_positions_dict):
         """将电机位置字典转换为JointState消息"""
@@ -119,27 +173,14 @@ class IKTestClient(Node):
         self.pose_publisher.publish(pose_msg)
         self.get_logger().info(f'已发布抓取位姿到 /grasp_pose 话题')
     
-    def call_ik_service(self):
-        while self.current_joint_state is None:
-            self.get_logger().info('等待接收当前关节状态...')
-            rclpy.spin_once(self, timeout_sec=1.0)
-        
-        # 记录当前关节状态
-        left_arm_joints = ['shoulder_pitch_l_joint', 'shoulder_roll_l_joint', 
-                          'shoulder_yaw_l_joint', 'elbow_pitch_l_joint',
-                          'elbow_yaw_l_joint', 'wrist_pitch_l_joint', 'wrist_roll_l_joint']
-        self.get_logger().info('=== 当前左臂关节状态 ===')
-        for joint_name in left_arm_joints:
-            if joint_name in self.current_joint_state.name:
-                idx = self.current_joint_state.name.index(joint_name)
-                self.get_logger().info(f'  {joint_name}: {self.current_joint_state.position[idx]:.5f}')
-        
+    def call_ik_service_with_params(self, group_name, frame_id, position, orientation):
+        """使用指定参数调用IK服务"""
         # 创建请求
         request = GetPositionIK.Request()
-        request.ik_request.group_name = 'left_arm'
+        request.ik_request.group_name = group_name
         
         # 归一化四元数（确保是单位四元数）
-        q = self.target_orientation
+        q = orientation
         norm = math.sqrt(q.x**2 + q.y**2 + q.z**2 + q.w**2)
         normalized_quat = Quaternion(
             x=q.x/norm, 
@@ -149,32 +190,26 @@ class IKTestClient(Node):
         )
         
         # 设置目标位姿
-        request.ik_request.pose_stamped.header.frame_id = self.frame_id
-        request.ik_request.pose_stamped.pose.position = self.target_position
+        request.ik_request.pose_stamped.header.frame_id = frame_id
+        request.ik_request.pose_stamped.header.stamp = self.get_clock().now().to_msg()
+        request.ik_request.pose_stamped.pose.position = position
         request.ik_request.pose_stamped.pose.orientation = normalized_quat
         
         self.get_logger().info('=== 目标位姿 ===')
-        self.get_logger().info(f'  frame_id: {self.frame_id}')
-        self.get_logger().info(f'  position: [{self.target_position.x:.6f}, {self.target_position.y:.6f}, {self.target_position.z:.6f}]')
+        self.get_logger().info(f'  group_name: {group_name}')
+        self.get_logger().info(f'  frame_id: {frame_id}')
+        self.get_logger().info(f'  position: [{position.x:.6f}, {position.y:.6f}, {position.z:.6f}]')
         self.get_logger().info(f'  orientation: [{normalized_quat.x:.6f}, {normalized_quat.y:.6f}, {normalized_quat.z:.6f}, {normalized_quat.w:.6f}]')
         self.get_logger().info(f'  四元数模: {norm:.6f}')
 
-        # 使用prepare_pose["left_arm"][1]作为IK种子
-        seed_pose = prepare_pose["left_arm"][1]
+        # 根据group_name选择IK种子
+        if 'left' in group_name:
+            seed_pose = prepare_pose["left_arm"][1]
+        elif 'right' in group_name:
+            seed_pose = prepare_pose["right_arm"][1]
+        else:
+            seed_pose = prepare_pose["left_arm"][1]
         self.get_logger().info('=== 使用的IK种子状态 ===')
-        motor_joint_map = {
-            11: 'shoulder_pitch_l_joint',
-            12: 'shoulder_roll_l_joint',
-            13: 'shoulder_yaw_l_joint',
-            14: 'elbow_pitch_l_joint',
-            15: 'elbow_yaw_l_joint',
-            16: 'wrist_pitch_l_joint',
-            17: 'wrist_roll_l_joint'
-        }
-        # for motor_id, pos in seed_pose.items():
-        #     joint_name = motor_joint_map.get(motor_id, f'未知关节{motor_id}')
-        #     self.get_logger().info(f'  电机{motor_id} ({joint_name}): {pos:.5f}')
-        
         request.ik_request.robot_state = RobotState()
         request.ik_request.robot_state.joint_state = self.create_joint_state_from_motor_dict(seed_pose)
         request.ik_request.avoid_collisions = True
@@ -192,6 +227,15 @@ class IKTestClient(Node):
         else:
             self.get_logger().error('服务调用失败')
             return None
+    
+    def call_ik_service(self):
+        """使用类属性调用IK服务（向后兼容）"""
+        return self.call_ik_service_with_params(
+            'left_arm',
+            self.frame_id,
+            self.target_position,
+            self.target_orientation
+        )
     
     def extract_joint_positions(self, response):
         # 定义需要提取的关节名称及其对应的电机ID
@@ -218,16 +262,17 @@ class IKTestClient(Node):
             self.get_logger().info(f'IK返回关节总数: {len(joint_names)}')
             
             # 显示所有返回的关节
-            for i, joint_name in enumerate(joint_names):
-                marker = "→" if joint_name in joint_motor_map else " "
-                self.get_logger().info(f'{marker} [{i}] {joint_name}: {joint_positions[i]:.5f}')
+            # for i, joint_name in enumerate(joint_names):
+            #     if joint_name in joint_motor_map:
+            #         marker = "→" if joint_name in joint_motor_map else " "
+            #         self.get_logger().info(f'{marker} [{i}] {joint_name}: {joint_positions[i]:.5f}')
             
             self.get_logger().info(f'=== 提取左臂7个关节 ===')
             for i, joint_name in enumerate(joint_names):
                 if joint_name in joint_motor_map:
                     motor_id = joint_motor_map[joint_name]
                     result_dict[motor_id] = round(joint_positions[i], 5)
-                    self.get_logger().info(f'  {joint_name} → 电机{motor_id}: {joint_positions[i]:.5f}')
+                    self.get_logger().info(f'  [{i}] {joint_name} → 电机{motor_id}: {joint_positions[i]:.5f}')
             
             # 检查是否所有7个关节都找到了
             if len(result_dict) != 7:
@@ -240,8 +285,84 @@ class IKTestClient(Node):
             self.get_logger().error(f'IK求解失败，错误码: {response.error_code.val}')
             return None
     
+    def compare_poses(self, pos1, quat1, pos2, quat2, 
+                      pos_threshold=None, angle_threshold=None,
+                      pos1_label="位姿1", pos2_label="位姿2"):
+        """
+        比较两个位姿的差异
+        
+        参数:
+            pos1: Point - 第一个位姿的位置
+            quat1: Quaternion/None - 第一个位姿的姿态（为None则不比较姿态）
+            pos2: Point - 第二个位姿的位置
+            quat2: Quaternion/None - 第二个位姿的姿态（为None则不比较姿态）
+            pos_threshold: float - 位置阈值(米)，设置后用于判断
+            angle_threshold: float - 角度阈值(度)，设置后用于判断
+            pos1_label: str - 位姿1的标签（用于日志）
+            pos2_label: str - 位姿2的标签（用于日志）
+        
+        返回: (is_within_threshold, pos_error_m, angle_diff_deg)
+            - is_within_threshold: bool/None (有阈值时返回判断结果，否则返回None)
+            - pos_error_m: float - 位置误差(米)
+            - angle_diff_deg: float/None - 角度误差(度)，无姿态时返回None
+        """
+        # 计算位置误差
+        pos_error = math.sqrt(
+            (pos1.x - pos2.x)**2 +
+            (pos1.y - pos2.y)**2 +
+            (pos1.z - pos2.z)**2
+        )
+        
+        # 输出位置信息
+        self.get_logger().info(f'{pos1_label}位置: [{pos1.x:.6f}, {pos1.y:.6f}, {pos1.z:.6f}]')
+        self.get_logger().info(f'{pos2_label}位置: [{pos2.x:.6f}, {pos2.y:.6f}, {pos2.z:.6f}]')
+        self.get_logger().info(f'位置误差: {pos_error:.6f} 米 ({pos_error*1000:.3f} 毫米)')
+        
+        angle_diff = None
+        
+        # 如果提供了四元数，计算姿态误差
+        if quat1 is not None and quat2 is not None:
+            # 归一化两个四元数
+            norm1 = math.sqrt(quat1.x**2 + quat1.y**2 + quat1.z**2 + quat1.w**2)
+            norm2 = math.sqrt(quat2.x**2 + quat2.y**2 + quat2.z**2 + quat2.w**2)
+            
+            q1_norm = Quaternion(
+                x=quat1.x/norm1, y=quat1.y/norm1, 
+                z=quat1.z/norm1, w=quat1.w/norm1
+            )
+            q2_norm = Quaternion(
+                x=quat2.x/norm2, y=quat2.y/norm2, 
+                z=quat2.z/norm2, w=quat2.w/norm2
+            )
+            
+            # 四元数点积
+            dot_product = (
+                q1_norm.x * q2_norm.x + 
+                q1_norm.y * q2_norm.y + 
+                q1_norm.z * q2_norm.z + 
+                q1_norm.w * q2_norm.w
+            )
+            angle_diff = 2 * math.acos(min(abs(dot_product), 1.0)) * 180 / math.pi
+            
+            # 输出姿态信息
+            self.get_logger().info(f'{pos1_label}姿态: [{q1_norm.x:.6f}, {q1_norm.y:.6f}, {q1_norm.z:.6f}, {q1_norm.w:.6f}]')
+            self.get_logger().info(f'{pos2_label}姿态: [{q2_norm.x:.6f}, {q2_norm.y:.6f}, {q2_norm.z:.6f}, {q2_norm.w:.6f}]')
+            self.get_logger().info(f'姿态角度差: {angle_diff:.3f} 度')
+        
+        # 判断是否在阈值内
+        is_within_threshold = None
+        if pos_threshold is not None:
+            pos_ok = pos_error < pos_threshold
+            if angle_threshold is not None and angle_diff is not None:
+                angle_ok = angle_diff < angle_threshold
+                is_within_threshold = pos_ok and angle_ok
+            else:
+                is_within_threshold = pos_ok
+        
+        return is_within_threshold, pos_error, angle_diff
+    
     def verify_ik_solution_with_fk(self, joint_positions_dict, response):
-        """使用FK验证IK解是否正确"""
+        """IK解算结果角度进行FK计算后的位姿与指定目标位姿对比"""
         self.get_logger().info('=== 开始FK验证IK解 ===')
         
         # 等待FK服务
@@ -265,39 +386,19 @@ class IKTestClient(Node):
         if fk_future.result() is not None:
             fk_response = fk_future.result()
             if fk_response.error_code.val == 1 and len(fk_response.pose_stamped) > 0:
-                actual_pose = fk_response.pose_stamped[0].pose
+                fk_pose = fk_response.pose_stamped[0].pose
                 
-                # 计算位置误差
-                pos_error = math.sqrt(
-                    (actual_pose.position.x - self.target_position.x)**2 +
-                    (actual_pose.position.y - self.target_position.y)**2 +
-                    (actual_pose.position.z - self.target_position.z)**2
+                # 使用公共方法比较位姿
+                is_ok, pos_error, angle_diff = self.compare_poses(
+                    fk_pose.position, fk_pose.orientation,
+                    self.target_position, self.target_orientation,
+                    pos_threshold=0.001, angle_threshold=1.0,
+                    pos1_label="IK解对应的FK计算",
+                    pos2_label="IK目标"
                 )
                 
-                self.get_logger().info(f'IK解对应的FK计算位置: [{actual_pose.position.x:.6f}, {actual_pose.position.y:.6f}, {actual_pose.position.z:.6f}]')
-                self.get_logger().info(f'IK目标位置: [{self.target_position.x:.6f}, {self.target_position.y:.6f}, {self.target_position.z:.6f}]')
-                self.get_logger().info(f'位置误差: {pos_error:.6f} 米 ({pos_error*1000:.3f} 毫米)')
-                
-                # 计算方向误差（四元数点积表示相似度）
-                q_actual = actual_pose.orientation
-                q_target = self.target_orientation
-                # 归一化目标四元数
-                norm = math.sqrt(q_target.x**2 + q_target.y**2 + q_target.z**2 + q_target.w**2)
-                q_target_norm = Quaternion(x=q_target.x/norm, y=q_target.y/norm, 
-                                          z=q_target.z/norm, w=q_target.w/norm)
-                
-                # 四元数点积
-                dot_product = (q_actual.x * q_target_norm.x + 
-                               q_actual.y * q_target_norm.y + 
-                               q_actual.z * q_target_norm.z + 
-                               q_actual.w * q_target_norm.w)
-                angle_diff = 2 * math.acos(min(abs(dot_product), 1.0)) * 180 / math.pi
-                
-                self.get_logger().info(f'IK解对应的FK姿态: [{q_actual.x:.6f}, {q_actual.y:.6f}, {q_actual.z:.6f}, {q_actual.w:.6f}]')
-                self.get_logger().info(f'IK目标姿态: [{q_target_norm.x:.6f}, {q_target_norm.y:.6f}, {q_target_norm.z:.6f}, {q_target_norm.w:.6f}]')
-                self.get_logger().info(f'姿态角度差: {angle_diff:.3f} 度')
-                
-                if pos_error < 0.001 and angle_diff < 1.0:
+                # 根据结果输出不同级别的日志
+                if is_ok:
                     self.get_logger().info('✓ IK解的FK验证通过：IK找到了正确的解')
                 elif pos_error > 0.1:
                     self.get_logger().error(
@@ -311,6 +412,50 @@ class IKTestClient(Node):
                     self.get_logger().warn(f'⚠ IK解精度较低: 位置误差{pos_error*1000:.1f}mm, 角度差{angle_diff:.1f}°')
             else:
                 self.get_logger().error(f'FK求解失败: {fk_response.error_code.val}')
+    
+    def get_current_end_effector_transform(self, base_frame='pelvis', max_retries=5):
+        """
+        获取当前末端执行器的TF2变换
+        
+        返回: (transform, actual_pos, actual_quat) 或 (None, None, None)
+        """
+        try:
+            transform = None
+            for attempt in range(max_retries):
+                for _ in range(10):
+                    rclpy.spin_once(self, timeout_sec=0.2)
+                
+                try:
+                    transform = self.tf_buffer.lookup_transform(
+                        base_frame,
+                        'L_base_link',
+                        rclpy.time.Time(),
+                        timeout=rclpy.duration.Duration(seconds=1.0)
+                    )
+                    break
+                except (LookupException, ConnectivityException, ExtrapolationException) as e:
+                    if attempt < max_retries - 1:
+                        self.get_logger().debug(f'TF查询重试 {attempt + 1}/{max_retries}...')
+                        for _ in range(10):
+                            rclpy.spin_once(self, timeout_sec=0.2)
+                    else:
+                        raise
+            
+            if transform is None:
+                self.get_logger().error(f'无法获取 {base_frame} → L_base_link 变换')
+                return None, None, None
+            
+            # 提取位置和姿态
+            actual_pos = transform.transform.translation
+            actual_quat = transform.transform.rotation
+            return transform, actual_pos, actual_quat
+            
+        except (LookupException, ConnectivityException, ExtrapolationException) as e:
+            self.get_logger().error(f'TF2查询失败: {e}')
+            return None, None, None
+        except Exception as e:
+            self.get_logger().error(f'TF2查询异常: {e}')
+            return None, None, None
     
     def verify_execution(self, target_joint_positions_dict):
         """验证关节是否真的移动到了目标位置"""
@@ -380,38 +525,17 @@ class IKTestClient(Node):
         self.diagnose_fk_vs_tf_after_execution()
     
     def diagnose_fk_vs_tf_after_execution(self):
-        """执行完成后，验证FK与TF2是否一致 - 这是找出问题的关键"""
+        """末端真实TF2位姿与用当前角度FK计算结果位姿对比"""
         self.get_logger().info('使用当前实际关节状态验证FK与TF2...')
         
-        # 1. 获取TF2当前位置
-        try:
-            transform = None
-            for attempt in range(3):
-                for _ in range(2):
-                    rclpy.spin_once(self, timeout_sec=0.1)
-                try:
-                    transform = self.tf_buffer.lookup_transform(
-                        'pelvis', 'L_base_link',
-                        rclpy.time.Time(),
-                        timeout=rclpy.duration.Duration(seconds=1.0)
-                    )
-                    break
-                except (LookupException, ConnectivityException, ExtrapolationException):
-                    if attempt < 2:
-                        time.sleep(0.3)
-                    else:
-                        raise
-            
-            if transform is None:
-                self.get_logger().error('无法获取TF变换')
-                return
-                
-            tf_pos = transform.transform.translation
-            tf_quat = transform.transform.rotation
-            self.get_logger().info(f'TF2当前位置: [{tf_pos.x:.6f}, {tf_pos.y:.6f}, {tf_pos.z:.6f}]')
-        except Exception as e:
-            self.get_logger().error(f'TF2查询失败: {e}')
+        base_frame = self.base_frame
+        
+        # 1. 获取TF2当前位置（使用辅助方法）
+        transform, tf_pos, tf_quat = self.get_current_end_effector_transform(base_frame, max_retries=3)
+        if transform is None:
             return
+        
+        self.get_logger().info(f'参考坐标系: {base_frame}')
         
         # 2. 使用当前实际关节状态做FK计算
         if not self.fk_client.wait_for_service(timeout_sec=2.0):
@@ -419,7 +543,7 @@ class IKTestClient(Node):
             return
         
         fk_request = GetPositionFK.Request()
-        fk_request.header.frame_id = 'pelvis'
+        fk_request.header.frame_id = base_frame
         fk_request.fk_link_names = ['L_base_link']
         fk_request.robot_state = RobotState()
         fk_request.robot_state.joint_state = self.current_joint_state
@@ -431,128 +555,61 @@ class IKTestClient(Node):
             fk_response = fk_future.result()
             if fk_response.error_code.val == 1 and len(fk_response.pose_stamped) > 0:
                 fk_pose = fk_response.pose_stamped[0].pose
-                fk_pos = fk_pose.position
-                fk_quat = fk_pose.orientation
                 
-                self.get_logger().info(f'FK计算位置: [{fk_pos.x:.6f}, {fk_pos.y:.6f}, {fk_pos.z:.6f}]')
-                
-                # 3. 对比差异
-                pos_error = math.sqrt(
-                    (fk_pos.x - tf_pos.x)**2 +
-                    (fk_pos.y - tf_pos.y)**2 +
-                    (fk_pos.z - tf_pos.z)**2
+                # 使用公共方法比较位姿（只比较位置）
+                is_ok, pos_error, _ = self.compare_poses(
+                    fk_pose.position, None,
+                    tf_pos, None,
+                    pos_threshold=0.001,
+                    pos1_label="FK计算",
+                    pos2_label="TF2当前"
                 )
                 
-                self.get_logger().info(f'FK与TF2差异: {pos_error:.6f} 米 ({pos_error*1000:.3f} 毫米)')
-                
-                if pos_error < 0.001:
-                    self.get_logger().info('✓ 执行后FK与TF2仍然一致！')
+                # 根据结果输出日志
+                if is_ok:
+                    self.get_logger().info(f'✓ 执行后FK与TF2仍然一致！（在{base_frame}坐标系下）')
+                    self.get_logger().info('✓ URDF模型正确，手臂成功移动到期望位姿！')
                 else:
                     self.get_logger().error(
                         f'✗ 执行后FK与TF2不一致！({pos_error*1000:.1f}mm)\n'
-                        f'>>> 重大发现：URDF模型在不同关节配置下不一致！\n'
-                        f'>>> 初始状态时FK=TF2，执行后FK≠TF2\n'
+                        f'>>> URDF模型在不同关节配置下不一致\n'
                         f'>>> 这说明URDF定义有问题，或者joint_states发布的joint顺序/名称不一致'
                     )
             else:
                 self.get_logger().error(f'FK求解失败: {fk_response.error_code.val}')
     
     def verify_end_effector_position(self):
-        """使用TF2查询实际末端位置并与目标对比"""
+        """末端真实TF2位姿与指定目标位姿对比"""
         self.get_logger().info('=== TF2查询实际末端位置 ===')
         
-        try:
-            # 1. 查询 waist_yaw_link → L_base_link（只包含手臂关节）
-            max_retries = 5
-            arm_transform = None
-            for attempt in range(max_retries):
-                for _ in range(2):
-                    rclpy.spin_once(self, timeout_sec=0.1)
-                
-                try:
-                    arm_transform = self.tf_buffer.lookup_transform(
-                        'waist_yaw_link',  # 从腰部开始（与IK配置一致）
-                        'L_base_link',
-                        rclpy.time.Time(),
-                        timeout=rclpy.duration.Duration(seconds=1.0)
-                    )
-                    break
-                except (LookupException, ConnectivityException, ExtrapolationException) as e:
-                    if attempt < max_retries - 1:
-                        self.get_logger().info(f'TF查询重试 {attempt + 1}/{max_retries}...')
-                        time.sleep(0.3)
-                    else:
-                        raise
-            
-            if arm_transform is None:
-                self.get_logger().error('无法获取 waist_yaw_link → L_base_link 变换')
-                return
-            
-            # 2. 查询 pelvis → waist_yaw_link（腰部变换）
-            pelvis_to_waist = self.tf_buffer.lookup_transform(
-                'pelvis',
-                'waist_yaw_link',
-                rclpy.time.Time(),
-                timeout=rclpy.duration.Duration(seconds=1.0)
+        base_frame = self.base_frame
+        
+        # 获取TF2当前位置（使用辅助方法）
+        transform, actual_pos, actual_quat = self.get_current_end_effector_transform(base_frame)
+        if transform is None:
+            return
+        
+        self.get_logger().info(f'参考坐标系: {base_frame}')
+        
+        # 使用公共方法比较位姿
+        is_ok, pos_error, angle_diff = self.compare_poses(
+            actual_pos, actual_quat,
+            self.target_position, self.target_orientation,
+            pos_threshold=0.005, angle_threshold=5.0,
+            pos1_label="TF2实际末端",
+            pos2_label="IK目标"
+        )
+        
+        # 根据结果输出日志
+        if is_ok:
+            self.get_logger().info('✓ 末端位置验证通过！执行成功！')
+        else:
+            self.get_logger().error(
+                f'✗ 末端位置误差过大！\n'
+                f'  位置差: {pos_error*1000:.1f}mm (阈值: 5mm)\n'
+                f'  角度差: {angle_diff:.1f}° (阈值: 5°)\n'
+                f'  → 可能的问题：IK求解精度不足或关节控制未到位'
             )
-            
-            # 3. 将目标位姿从 pelvis 转换到 waist_yaw_link 坐标系
-            target_pose_stamped = PoseStamped()
-            target_pose_stamped.header.frame_id = 'pelvis'
-            target_pose_stamped.pose.position = self.target_position
-            target_pose_stamped.pose.orientation = self.target_orientation
-            
-            # 使用 TF2 转换目标位姿
-            from tf2_geometry_msgs import do_transform_pose
-            target_in_waist = do_transform_pose(target_pose_stamped, pelvis_to_waist)
-            
-            # 4. 比较实际末端位置（在 waist_yaw_link 坐标系下）
-            actual_pos = arm_transform.transform.translation
-            actual_quat = arm_transform.transform.rotation
-            target_pos = target_in_waist.pose.position
-            target_quat = target_in_waist.pose.orientation
-            
-            # 5. 计算位置误差（都在 waist_yaw_link 坐标系下）
-            pos_error = math.sqrt(
-                (actual_pos.x - target_pos.x)**2 +
-                (actual_pos.y - target_pos.y)**2 +
-                (actual_pos.z - target_pos.z)**2
-            )
-            
-            self.get_logger().info(f'参考坐标系: waist_yaw_link（与IK配置一致）')
-            self.get_logger().info(f'TF2实际末端位置: [{actual_pos.x:.6f}, {actual_pos.y:.6f}, {actual_pos.z:.6f}]')
-            self.get_logger().info(f'IK目标位置（转换后）: [{target_pos.x:.6f}, {target_pos.y:.6f}, {target_pos.z:.6f}]')
-            self.get_logger().info(f'位置误差: {pos_error:.6f} 米 ({pos_error*1000:.3f} 毫米)')
-            
-            # 6. 计算姿态误差
-            norm = math.sqrt(target_quat.x**2 + target_quat.y**2 + target_quat.z**2 + target_quat.w**2)
-            q_target_norm = Quaternion(x=target_quat.x/norm, y=target_quat.y/norm, 
-                                      z=target_quat.z/norm, w=target_quat.w/norm)
-            
-            dot_product = (actual_quat.x * q_target_norm.x + 
-                           actual_quat.y * q_target_norm.y + 
-                           actual_quat.z * q_target_norm.z + 
-                           actual_quat.w * q_target_norm.w)
-            angle_diff = 2 * math.acos(min(abs(dot_product), 1.0)) * 180 / math.pi
-            
-            self.get_logger().info(f'TF2实际姿态: [{actual_quat.x:.6f}, {actual_quat.y:.6f}, {actual_quat.z:.6f}, {actual_quat.w:.6f}]')
-            self.get_logger().info(f'IK目标姿态（转换后）: [{q_target_norm.x:.6f}, {q_target_norm.y:.6f}, {q_target_norm.z:.6f}, {q_target_norm.w:.6f}]')
-            self.get_logger().info(f'姿态角度差: {angle_diff:.3f} 度')
-            
-            if pos_error < 0.005 and angle_diff < 5.0:
-                self.get_logger().info('✓ 末端位置验证通过！执行成功！')
-            else:
-                self.get_logger().error(
-                    f'✗ 末端位置误差过大！\n'
-                    f'  位置差: {pos_error*1000:.1f}mm (阈值: 5mm)\n'
-                    f'  角度差: {angle_diff:.1f}° (阈值: 5°)\n'
-                    f'  → 可能的问题：IK求解精度不足或关节控制未到位'
-                )
-                
-        except (LookupException, ConnectivityException, ExtrapolationException) as e:
-            self.get_logger().error(f'TF2查询失败: {e}')
-        except Exception as e:
-            self.get_logger().error(f'坐标转换失败: {e}')
     
     def create_header(self):
         """
@@ -627,15 +684,33 @@ class IKTestClient(Node):
             
             self.arm_to_pose(pose)
 
+def ros_main():
+    """
+    ROS节点模式：持续运行，监听/ik_request话题
+    通过 ros2 run grab_demo ik_client_node 启动
+    """
+    rclpy.init()
+    
+    ik_client = IKClientNode()
+    
+    ik_client.get_logger().info('=== IK客户端节点已启动 ===')
+    ik_client.get_logger().info('等待 /ik_request 话题消息...')
+    ik_client.get_logger().info('发布IKRequest消息到 /ik_request 话题以触发IK求解')
+    
+    try:
+        rclpy.spin(ik_client)
+    except KeyboardInterrupt:
+        ik_client.get_logger().info('收到中断信号，正在关闭节点...')
+    finally:
+        ik_client.destroy_node()
+        rclpy.shutdown()
 
 def main():
     rclpy.init()
     
-    ik_client = IKTestClient()
+    ik_client = IKClientNode()
         
     ik_client.arm_pose_init()
-
-    # return
 
     # 发布抓取位姿
     ik_client.publish_grasp_pose()
@@ -649,7 +724,7 @@ def main():
         
         if joint_positions:
             # 验证IK解（数学验证）
-            ik_client.verify_ik_solution_with_fk(joint_positions, response)
+            # ik_client.verify_ik_solution_with_fk(joint_positions, response)
             
             # 转换为JSON字符串并输出
             json_output = json.dumps(joint_positions)
@@ -664,7 +739,7 @@ def main():
             ik_client.arm_to_pose(joint_positions, spd=VELOCITY_LIMIT/2)
             
             # 验证执行结果（物理验证）
-            ik_client.verify_execution(joint_positions)
+            # ik_client.verify_execution(joint_positions)
 
     
     ik_client.destroy_node()
