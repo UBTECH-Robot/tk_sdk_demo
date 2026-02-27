@@ -7,7 +7,10 @@ PoseVerificationMixin
 宿主类需提供：
   - self.tf_buffer (tf2_ros.Buffer)
   - self.get_logger()
-  - rclpy.spin_once(self, ...) 可被正常调用（即宿主是一个 Node）
+
+注意：本 Mixin 的方法会在后台线程中被调用（不在主 spin 线程中），
+因此内部不得调用 rclpy.spin_once(self, ...)，否则会与主线程的 rclpy.spin()
+竞争节点的回调队列，导致主线程 executor 状态损坏，后续所有回调永久失效。
 
 不继承 Node，避免多继承时 MRO 冲突与重复初始化。
 """
@@ -111,8 +114,12 @@ class PoseVerificationMixin:
         try:
             transform = None
             for attempt in range(max_retries):
+                # 等待 TF buffer 更新（主线程的 rclpy.spin() 持续更新 TF）
+                # 不在后台线程中调用 rclpy.spin_once，否则会与主线程的 spin() 竞争
+                # 导致主线程 executor 状态损坏，回调永久失效
+                import time as _time
                 for _ in range(10):
-                    rclpy.spin_once(self, timeout_sec=0.2)
+                    _time.sleep(0.2)
 
                 try:
                     transform = self.tf_buffer.lookup_transform(
@@ -126,7 +133,7 @@ class PoseVerificationMixin:
                     if attempt < max_retries - 1:
                         self.get_logger().debug(f'TF查询重试 {attempt + 1}/{max_retries}...')
                         for _ in range(10):
-                            rclpy.spin_once(self, timeout_sec=0.2)
+                            _time.sleep(0.2)
                     else:
                         raise
 
