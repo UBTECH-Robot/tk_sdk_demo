@@ -137,6 +137,8 @@ python /home/nvidia/sdk_demo/src/grab_demo/grab_demo/yolo_detect_node.py
 python /home/nvidia/sdk_demo/src/grab_demo/grab_demo/grasp_executor_node.py
 
 python /home/nvidia/sdk_demo/src/grab_demo/grab_demo/ik_client_node.py
+python /home/nvidia/sdk_demo/src/grab_demo/grab_demo/grasp_prepare_pose_node.py
+
 <!-- ros2 run grab_demo yolo_grab_node --target_classes apple -->
 
 相机话题复制：

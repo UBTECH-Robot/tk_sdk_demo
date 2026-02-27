@@ -31,25 +31,25 @@ CURRENT_LIMIT  = 5.0   # 电流限制（安培）
 # IK 种子姿态：提供一个合理的初始关节角度，帮助 IK 找到好的解
 prepare_pose = {
     "left_arm": [
-        {11: 0.5, 12: 0.15, 13: 0.1, 14: -0.9,  15: 0.2,  16: 0.0, 17: 0.0},
-        {11: 0.5, 12: 0.4,  13: 0.1, 14: -2.0,  15: 0.2,  16: 0.0, 17: 0.0},
+        {11: 0.5, 12: 0.15, 13: 0.2, 14: -0.9,  15: 0.2,  16: 0.0, 17: 0.0},
+        {11: 0.5, 12: 0.4, 13: 0.3, 14: -2.0, 15: 0.2, 16: 0.0, 17: 0.0},
     ],
     "right_arm": [
-        {21: 0.5, 22: -0.15, 23: -0.1, 24: -0.9,  25: -0.2, 26: 0.0, 27: 0.0},
-        {21: 0.5, 22: -0.4,  23: -0.1, 24: -2.0,  25: -0.2, 26: 0.0, 27: 0.0},
+        {21: 0.5, 22: -0.15, 23: -0.2, 24: -0.9, 25: -0.2, 26: 0.0, 27: 0.0},
+        {21: 0.5, 22: -0.4, 23: -0.3, 24: -2.0, 25: -0.2, 26: 0.0, 27: 0.0},
     ],
 }
 
 end_pose_sequence = {
     "left_arm": [
-        {11: 1.2, 12: 0.4, 13: 0.1, 14: -2.5, 15: 0.2, 16: 0.0, 17: 0.0},
-        {11: 0.5, 12: 0.4, 13: 0.1, 14: -2.0, 15: 0.2, 16: 0.0, 17: 0.0},
-        {11: 0.5, 12: 0.15, 13: 0.1, 14: -0.9, 15: 0.2, 16: 0.0, 17: 0.0},
+        {11: 1.2, 12: 0.4, 13: 0.2, 14: -2.5, 15: 0.2, 16: 0.0, 17: 0.0},
+        {11: 0.5, 12: 0.4, 13: 0.3, 14: -2.0, 15: 0.2, 16: 0.0, 17: 0.0},
+        {11: 0.5, 12: 0.15, 13: 0.2, 14: -0.9, 15: 0.2, 16: 0.0, 17: 0.0},
     ],
     "right_arm": [
-        {21: 1.2, 22: -0.4, 23: -0.1, 24: -2.5, 25: -0.2, 26: 0.0, 27: 0.0},
-        {21: 0.5, 22: -0.4, 23: -0.1, 24: -2.0, 25: -0.2, 26: 0.0, 27: 0.0},
-        {21: 0.5, 22: -0.15, 23: -0.1, 24: -0.9, 25: -0.2, 26: 0.0, 27: 0.0},
+        {21: 1.2, 22: -0.4, 23: -0.2, 24: -2.5, 25: -0.2, 26: 0.0, 27: 0.0},
+        {21: 0.5, 22: -0.4, 23: -0.3, 24: -2.0, 25: -0.2, 26: 0.0, 27: 0.0},
+        {21: 0.5, 22: -0.15, 23: -0.2, 24: -0.9, 25: -0.2, 26: 0.0, 27: 0.0},
     ],
 }
 
@@ -107,7 +107,6 @@ _RIGHT_ARM_JOINT_MOTOR_MAP = {
     'wrist_roll_r_joint':     '27',
 }
 
-
 class ArmControlMixin:
     """IK 解算与手臂运动控制功能 Mixin"""
 
@@ -115,13 +114,13 @@ class ArmControlMixin:
     # 内部工具方法
     # ------------------------------------------------------------------
 
-    def _create_arm_header(self):
+    def _create_header(self, frame_id="arm"):
         """创建手臂命令消息头"""
         now = self.get_clock().now()
         header = Header()
         header.stamp.sec     = int(now.nanoseconds // 1_000_000_000)
         header.stamp.nanosec = int(now.nanoseconds  % 1_000_000_000)
-        header.frame_id = 'arm'
+        header.frame_id = frame_id
         return header
 
     def _get_joint_motor_map(self, group_name: str) -> dict:
@@ -171,8 +170,6 @@ class ArmControlMixin:
                     joint_state.position.append(self.current_joint_state.position[i])
 
         return joint_state
-
-    # ------------------------------------------------------------------
 
     def call_ik_service_with_params(self, group_name: str, frame_id: str,
                                     position, orientation):
@@ -285,7 +282,7 @@ class ArmControlMixin:
             pose: {电机ID(int或str): 目标角度(float)}
             spd:  运动速度（弧度/秒），默认使用 VELOCITY_LIMIT
         """
-        header = self._create_arm_header()
+        header = self._create_header()
         msg = CmdSetMotorPosition()
         msg.header = header
 
@@ -330,7 +327,6 @@ class ArmControlMixin:
                 print('✓ 手臂过渡已中止')
                 return False
         return True
-           
     
     def arm_pose_reverse_init(self) -> bool:
         """引导手臂逐段退回安全姿态，每段均需用户确认再执行。
