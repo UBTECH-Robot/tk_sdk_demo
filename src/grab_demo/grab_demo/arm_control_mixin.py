@@ -40,6 +40,19 @@ prepare_pose = {
     ],
 }
 
+end_pose_sequence = {
+    "left_arm": [
+        {11: 1.2, 12: 0.4, 13: 0.1, 14: -2.5, 15: 0.2, 16: 0.0, 17: 0.0},
+        {11: 0.5, 12: 0.4, 13: 0.1, 14: -2.0, 15: 0.2, 16: 0.0, 17: 0.0},
+        {11: 0.5, 12: 0.15, 13: 0.1, 14: -0.9, 15: 0.2, 16: 0.0, 17: 0.0},
+    ],
+    "right_arm": [
+        {21: 1.2, 22: -0.4, 23: -0.1, 24: -2.5, 25: -0.2, 26: 0.0, 27: 0.0},
+        {21: 0.5, 22: -0.4, 23: -0.1, 24: -2.0, 25: -0.2, 26: 0.0, 27: 0.0},
+        {21: 0.5, 22: -0.15, 23: -0.1, 24: -0.9, 25: -0.2, 26: 0.0, 27: 0.0},
+    ],
+}
+
 # MoveIt 错误码 → 说明映射（来自 moveit_msgs/MoveItErrorCodes）
 MOVEIT_ERROR_CODES = {
      1: 'SUCCESS（成功）',
@@ -317,17 +330,17 @@ class ArmControlMixin:
                 print('✓ 手臂过渡已中止')
                 return False
         return True
-            
+           
     
     def arm_pose_reverse_init(self) -> bool:
         """引导手臂逐段退回安全姿态，每段均需用户确认再执行。
 
         返回: True 表示全部阶段都成功执行，False 表示用户中止。
         """
-        left_arm_revposes  = list(reversed(prepare_pose['left_arm']))
-        right_arm_revposes = list(reversed(prepare_pose['right_arm']))
-        for idx, left_pose in enumerate(left_arm_revposes):
-            merged_pose = {**left_pose, **right_arm_revposes[idx]}
+        left_arm_end_pose  = end_pose_sequence['left_arm']
+        right_arm_end_pose = end_pose_sequence['right_arm']
+        for idx, left_pose in enumerate(left_arm_end_pose):
+            merged_pose = {**left_pose, **right_arm_end_pose[idx]}
             
             if hasattr(self, '_publish_model_ghost'):
                 self._publish_model_ghost(merged_pose)  # 发布到 GUI 可视化
@@ -336,7 +349,7 @@ class ArmControlMixin:
                 time.sleep(0.5)
                 
             user_input = input(
-                f'\n[{idx + 1}/{len(left_arm_revposes)}] '
+                f'\n[{idx + 1}/{len(left_arm_end_pose)}] '
                 f'是否移动手臂到第 {idx + 1} 个中止姿态？'
                 f'  (yes/y 确认, no/n 中止): '
             ).strip().lower()

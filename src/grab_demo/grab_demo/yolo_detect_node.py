@@ -1153,7 +1153,8 @@ class YoloDetectNode(Node):
                 
         # 四元数（从tf2_echo读取）- 必须归一化
         # q = [0.129, -0.147, -0.012, 0.981]
-        q = [-0.041, 0.712, -0.690, 0.121]
+        # q = [-0.041, 0.712, -0.690, 0.121]
+        q = [-0.293, -0.662, -0.340, 0.600]
         q_norm = np.linalg.norm(q)
         q = [x / q_norm for x in q]  # 归一化
         pose_stamped.pose.orientation.x = q[0]

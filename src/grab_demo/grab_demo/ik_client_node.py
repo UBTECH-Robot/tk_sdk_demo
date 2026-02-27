@@ -28,6 +28,22 @@ prepare_pose = {
         {1: 0.0, 2: 0.3, 3: 0.0},
     ]
 }
+reversed_prepare_pose = {
+    "left_arm": [
+        {11: 0.5, 12: 0.15, 13: 0.1, 14: -0.9, 15: 0.2, 16: 0.0, 17: 0.0},
+        {11: 0.5, 12: 0.4, 13: 0.1, 14: -2.0, 15: 0.2, 16: 0.0, 17: 0.0},
+        {11: 1.2, 12: 0.4, 13: 0.1, 14: -2.5, 15: 0.2, 16: 0.0, 17: 0.0},
+    ],
+    "right_arm": [
+        {21: 0.5, 22: -0.15, 23: -0.1, 24: -0.9, 25: -0.2, 26: 0.0, 27: 0.0},
+        {21: 0.5, 22: -0.4, 23: -0.1, 24: -2.0, 25: -0.2, 26: 0.0, 27: 0.0},
+        {21: 1.2, 22: -0.4, 23: -0.1, 24: -2.5, 25: -0.2, 26: 0.0, 27: 0.0},
+    ],
+    "head": [
+        {1: 0.0, 2: 0.3, 3: 0.0},
+    ]
+}
+
 VELOCITY_LIMIT = 0.4  # 速度限制（弧度/秒）
 CURRENT_LIMIT = 5.0  # 电流限制（安培）
 
@@ -514,8 +530,10 @@ class IKClientNode(PoseVerificationMixin, Node):
         time.sleep(6)  # 给电机足够的时间运动到目标位置
 
     def arm_pose_init(self):
-        poses = prepare_pose['left_arm']
-        for idx, pose in enumerate(poses):
+        left_poses = prepare_pose['left_arm']
+        right_poses = prepare_pose['right_arm']
+        for idx, pose in enumerate(left_poses):
+            merged_poses = {**pose, **right_poses[idx]}
             user_input = input(
                 "\n是否移动手臂到下一个位置？\n"
                 "  输入 'yes'/'y' 确定\n"
@@ -533,7 +551,7 @@ class IKClientNode(PoseVerificationMixin, Node):
                 print("✗ 无效的输入，取消移动")
                 return
             
-            self.arm_to_pose(pose)
+            self.arm_to_pose(merged_poses)
 
 def ros_main():
     """
@@ -561,8 +579,8 @@ def main():
     
     ik_client = IKClientNode()
         
-    # ik_client.arm_pose_init()
-
+    ik_client.arm_pose_init()
+    return
     # 发布抓取位姿
     ik_client.publish_grasp_pose()
     
