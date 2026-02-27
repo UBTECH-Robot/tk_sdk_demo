@@ -262,7 +262,7 @@ class YoloDetectNode(Node):
         # 注册同步回调函数
         self.ts.registerCallback(self.synchronized_image_cb)
         
-        # 发布抓取点
+        # 抓取点发布者
         self.grasp_pose_pub = self.create_publisher(PoseStamped, "/grasp_pose", 10)
         
         # 创建 /gui/joint_command 发布者（用于向GUI发送关节命令）
@@ -1433,12 +1433,12 @@ class YoloDetectNode(Node):
         # 这一步是关键：从2D图像空间 + 深度值 → 3D相机坐标空间
         coords_3d_camera_frame = self.pixel_to_3d_camera_coords(cx, cy, cz)
         
+        self.save_image(annotated_img, timestamp, suffix="detected_color")
+        self.save_image(depth_annotated, timestamp, suffix="detected_depth")
         # 检查坐标转换是否成功，如果失败则忽略本次数据直接返回
         if not coords_3d_camera_frame.get('valid', False):
             self.get_logger().warn(f"⚠ 3D坐标转换失败：{coords_3d_camera_frame.get('error', '未知错误')}。忽略本帧数据，进行下次检测。")
             self.get_logger().info("-" * 50)
-            self.save_image(annotated_img, timestamp, suffix="detected_color")
-            self.save_image(depth_annotated, timestamp, suffix="detected_depth")
             return
         
         # 发布抓取点位姿

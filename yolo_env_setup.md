@@ -133,8 +133,11 @@ ros2 launch moveit2_config move_group.launch.py
 可视化：
 ros2 launch moveit2_config moveit_rviz.launch.py
 
+python /home/nvidia/sdk_demo/src/grab_demo/grab_demo/yolo_detect_node.py
+python /home/nvidia/sdk_demo/src/grab_demo/grab_demo/grasp_executor_node.py
 
-ros2 run grab_demo yolo_grab_node --target_classes apple
+python /home/nvidia/sdk_demo/src/grab_demo/grab_demo/ik_client_node.py
+<!-- ros2 run grab_demo yolo_grab_node --target_classes apple -->
 
 相机话题复制：
 ros2 run topic_tools relay /camera/color/image_raw /ob_camera_head/color/image_raw & \

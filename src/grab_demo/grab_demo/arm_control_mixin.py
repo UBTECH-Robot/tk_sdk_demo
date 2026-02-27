@@ -40,6 +40,38 @@ prepare_pose = {
     ],
 }
 
+# MoveIt 错误码 → 说明映射（来自 moveit_msgs/MoveItErrorCodes）
+MOVEIT_ERROR_CODES = {
+     1: 'SUCCESS（成功）',
+    -1: 'FAILURE（通用失败）',
+    -2: 'PLANNING_FAILED（规划失败）',
+    -3: 'INVALID_MOTION_PLAN（无效运动规划）',
+    -4: 'MOTION_PLAN_INVALIDATED_BY_ENVIRONMENT_CHANGE（环境变化导致规划失效）',
+    -5: 'CONTROL_FAILED（控制失败）',
+    -6: 'UNABLE_TO_AQUIRE_SENSOR_DATA（无法获取传感器数据）',
+    -7: 'TIMED_OUT（超时）',
+    -8: 'PREEMPTED（被抢占/中断）',
+    -9: 'START_STATE_IN_COLLISION（起始状态碰撞）',
+   -10: 'START_STATE_VIOLATES_PATH_CONSTRAINTS（起始状态违反路径约束）',
+   -11: 'GOAL_IN_COLLISION（目标位置碰撞）',
+   -12: 'GOAL_VIOLATES_PATH_CONSTRAINTS（目标违反路径约束）',
+   -13: 'GOAL_CONSTRAINTS_VIOLATED（目标约束违反）',
+   -14: 'INVALID_GROUP_NAME（无效规划组名称）',
+   -15: 'INVALID_GOAL_CONSTRAINTS（无效目标约束）',
+   -16: 'INVALID_ROBOT_STATE（无效机器人状态）',
+   -17: 'INVALID_LINK_NAME（无效链接名称）',
+   -18: 'INVALID_OBJECT_NAME（无效物体名称）',
+   -19: 'FRAME_TRANSFORM_FAILURE（坐标系变换失败）',
+   -20: 'COLLISION_CHECKING_UNAVAILABLE（碰撞检测不可用）',
+   -21: 'ROBOT_STATE_STALE（机器人状态过期）',
+   -22: 'SENSOR_INFO_STALE（传感器信息过期）',
+   -23: 'COMMUNICATION_FAILURE（通信失败）',
+   -24: 'CRASH（崩溃）',
+   -25: 'ABORT（中止）',
+   -26: 'CHILD_PROCESS_FAILED（子进程失败）',
+   -31: 'NO_IK_SOLUTION（目标位姿超出可达范围，无 IK 解）',
+}
+
 # 关节名称 ↔ 电机 ID 映射（左臂）
 _LEFT_ARM_JOINT_MOTOR_MAP = {
     'shoulder_pitch_l_joint': '11',
@@ -96,13 +128,6 @@ class ArmControlMixin:
             motor_positions_dict: {电机ID(int或str): 角度(float)}
             group_name: 规划组名称，用于确定关节映射表
         """
-        joint_motor_map = {
-            int(k): v
-            for k, v in {
-                v: int(k)
-                for k, v in self._get_joint_motor_map(group_name).items()
-            }.items()
-        }
         # 构建 motor_id(int) → joint_name 的映射
         motor_to_joint = {
             int(k): v
@@ -167,11 +192,11 @@ class ArmControlMixin:
         self.get_logger().info(f'  group_name: {group_name}')
         self.get_logger().info(f'  frame_id: {frame_id}')
         self.get_logger().info(
-            f'  position: [{position.x:.6f}, {position.y:.6f}, {position.z:.6f}]'
+            f'  position: (x={position.x:.6f}, y={position.y:.6f}, z={position.z:.6f})'
         )
         self.get_logger().info(
-            f'  orientation: [{normalized_quat.x:.6f}, {normalized_quat.y:.6f}, '
-            f'{normalized_quat.z:.6f}, {normalized_quat.w:.6f}]'
+            f'  orientation: (x={normalized_quat.x:.6f}, y={normalized_quat.y:.6f}, '
+            f'z={normalized_quat.z:.6f}, w={normalized_quat.w:.6f})'
         )
 
         # 选择 IK 种子
@@ -213,7 +238,9 @@ class ArmControlMixin:
         joint_motor_map = self._get_joint_motor_map(group_name)
         result_dict = {}
 
-        self.get_logger().info(f'IK 错误码: {response.error_code.val}')
+        ik_code = response.error_code.val
+        ik_desc = MOVEIT_ERROR_CODES.get(ik_code, f'未知错误码 {ik_code}')
+        self.get_logger().info(f'IK 错误码: {ik_code}  →  {ik_desc}')
 
         if response.error_code.val == 1:  # SUCCESS
             joint_names     = response.solution.joint_state.name
@@ -236,7 +263,6 @@ class ArmControlMixin:
 
             return dict(sorted(result_dict.items(), key=lambda x: int(x[0])))
 
-        self.get_logger().error(f'IK 求解失败，错误码: {response.error_code.val}')
         return None
 
     def arm_to_pose(self, pose: dict, spd: float = VELOCITY_LIMIT):
@@ -274,6 +300,12 @@ class ArmControlMixin:
         right_arm_poses = prepare_pose['right_arm']
         for idx, left_pose in enumerate(left_arm_poses):
             merged_pose = {**left_pose, **right_arm_poses[idx]}
+            if hasattr(self, '_publish_model_ghost'):
+                self._publish_model_ghost(merged_pose)  # 发布到 GUI 可视化
+                time.sleep(0.5)  # 确保 GUI 有时间更新显示
+                self._publish_model_ghost(merged_pose)  # 再次发布，确保 GUI 收到最新数据
+                time.sleep(0.5)
+            
             user_input = input(
                 f'\n[{idx + 1}/{len(left_arm_poses)}] '
                 f'是否移动手臂到第 {idx + 1} 个过渡姿态？'
@@ -296,6 +328,13 @@ class ArmControlMixin:
         right_arm_revposes = list(reversed(prepare_pose['right_arm']))
         for idx, left_pose in enumerate(left_arm_revposes):
             merged_pose = {**left_pose, **right_arm_revposes[idx]}
+            
+            if hasattr(self, '_publish_model_ghost'):
+                self._publish_model_ghost(merged_pose)  # 发布到 GUI 可视化
+                time.sleep(0.5)  # 确保 GUI 有时间更新显示
+                self._publish_model_ghost(merged_pose)  # 再次发布，确保 GUI 收到最新数据
+                time.sleep(0.5)
+                
             user_input = input(
                 f'\n[{idx + 1}/{len(left_arm_revposes)}] '
                 f'是否移动手臂到第 {idx + 1} 个中止姿态？'

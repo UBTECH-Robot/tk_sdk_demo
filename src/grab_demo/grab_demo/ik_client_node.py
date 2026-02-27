@@ -68,8 +68,12 @@ class IKClientNode(PoseVerificationMixin, Node):
         self.get_logger().info("✓ 已订阅 /ik_request 话题")
 
         # 定义目标位姿
-        self.target_position = Point(x=0.374878, y=0.047079, z=0.310416)
+        # self.target_position = Point(x=0.374878, y=0.047079, z=0.310416)
+        # self.target_orientation = Quaternion(x=-0.041013, y=0.712226, z=-0.690219, w=0.121038)
+
+        self.target_position = Point(x=0.659072, y=0.316812, z=0.264747)
         self.target_orientation = Quaternion(x=-0.041013, y=0.712226, z=-0.690219, w=0.121038)
+
         self.frame_id = 'pelvis'
         
         while not self.client.wait_for_service(timeout_sec=1.0):
@@ -557,7 +561,7 @@ def main():
     
     ik_client = IKClientNode()
         
-    ik_client.arm_pose_init()
+    # ik_client.arm_pose_init()
 
     # 发布抓取位姿
     ik_client.publish_grasp_pose()

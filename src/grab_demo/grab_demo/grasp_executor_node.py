@@ -159,7 +159,7 @@ class GraspExecutorNode(ArmControlMixin, PoseVerificationMixin, Node):
                 return
 
             # ── 阶段 4：发布 IK 结果供 GUI 可视化 ────────────────────
-            self._publish_ik_result(joint_positions)
+            self._publish_model_ghost(joint_positions)
 
             # ── 阶段 5：用户确认是否执行此位姿 ───────────────────────
             with self.state_lock:
@@ -233,13 +233,13 @@ class GraspExecutorNode(ArmControlMixin, PoseVerificationMixin, Node):
 
         return self.extract_joint_positions(response, group_name)
 
-    def _publish_ik_result(self, joint_positions: dict):
-        """将 IK 解算结果以 JSON 格式发布到 /gui/joint_command，供 GUI 可视化"""
+    def _publish_model_ghost(self, joint_positions: dict):
+        """将 {11: 1.023345, 12: 0.567890, ...} 形式的关节角度以 JSON 格式发布到 /gui/joint_command，供 GUI 可视化"""
         json_str = json.dumps(joint_positions)
         msg      = String()
         msg.data = json_str
         self.joint_command_pub.publish(msg)
-        self.get_logger().info(f'IK 结果已发布到 /gui/joint_command: {json_str}')
+        # self.get_logger().info(f'IK 结果已发布到 /gui/joint_command: {json_str}')
 
     def _execute_arm_movement(self, joint_positions: dict):
         """向手臂发送运动命令（含 7s 等待，确保动作完成后再继续）"""
