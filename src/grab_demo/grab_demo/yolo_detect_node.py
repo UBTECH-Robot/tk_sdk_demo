@@ -1165,8 +1165,8 @@ class YoloDetectNode(Node):
         if coords_base['success']:
             # 变换成功：使用基座坐标系
             pose_stamped.header.frame_id = coords_base['frame_id']
-            pose_stamped.pose.position.x = coords_base['X']
-            pose_stamped.pose.position.y = coords_base['Y'] #+ 0.1
+            pose_stamped.pose.position.x = coords_base['X'] - 0.07
+            pose_stamped.pose.position.y = coords_base['Y'] + 0.07
             pose_stamped.pose.position.z = coords_base['Z']
             
             # self.get_logger().info(
