@@ -17,8 +17,10 @@ IK 解算与手臂运动控制的 Mixin 类，可被任意 rclpy.Node 子类混�
 不继承 Node，避免多继承时 MRO 冲突与重复初始化。
 """
 
+import copy
 import json
 import math
+import threading
 import time
 import rclpy
 from geometry_msgs.msg import Quaternion
@@ -135,6 +137,7 @@ class ArmControlMixin:
         self.get_logger().info('✓ GUI 关节命令发布者已创建（/gui/joint_command）')
 
         self.current_joint_state = None
+        self._joint_state_lock = threading.Lock()
         self.joint_states_sub = self.create_subscription(
             JointState, '/joint_states', self._joint_states_cb, 10
         )
@@ -142,7 +145,8 @@ class ArmControlMixin:
 
     def _joint_states_cb(self, msg: JointState):
         """关节状态订阅回调，持续更新 current_joint_state"""
-        self.current_joint_state = msg
+        with self._joint_state_lock:
+            self.current_joint_state = msg
 
     # ------------------------------------------------------------------
     # 内部工具方法
@@ -163,47 +167,73 @@ class ArmControlMixin:
             return _RIGHT_ARM_JOINT_MOTOR_MAP
         return _LEFT_ARM_JOINT_MOTOR_MAP
 
-    def create_joint_state_from_motor_dict(self, motor_positions_dict: dict,
-                                           group_name: str = 'left_arm') -> JointState:
-        """将电机位置字典转换为 JointState 消息
+    # def create_joint_state_from_motor_dict(self, motor_positions_dict: dict,
+    #                                        group_name: str = 'left_arm') -> JointState:
+    #     """将电机位置字典转换为 JointState 消息
+    #
+    #     会将字典中的目标关节加入到消息中，其余关节使用当前实际关节状态填充，
+    #     以避免 IK 求解器因缺少关节信息而失败。
+    #
+    #     参数:
+    #         motor_positions_dict: {电机ID(int或str): 角度(float)}
+    #         group_name: 规划组名称，用于确定关节映射表
+    #     """
+    #     # 构建 motor_id(int) → joint_name 的映射
+    #     motor_to_joint = {
+    #         int(k): v
+    #         for k, v in {
+    #             v: k for k, v in self._get_joint_motor_map(group_name).items()
+    #         }.items()
+    #     }
+    #
+    #     joint_state = JointState()
+    #     joint_state.header.stamp = self.get_clock().now().to_msg()
+    #
+    #     # 先填充目标组的关节
+    #     for motor_id_int in sorted(motor_to_joint.keys()):
+    #         joint_name = motor_to_joint[motor_id_int]
+    #         motor_id_str = str(motor_id_int)
+    #         if motor_id_int in motor_positions_dict:
+    #             joint_state.name.append(joint_name)
+    #             joint_state.position.append(motor_positions_dict[motor_id_int])
+    #         elif motor_id_str in motor_positions_dict:
+    #             joint_state.name.append(joint_name)
+    #             joint_state.position.append(motor_positions_dict[motor_id_str])
+    #
+    #     # 其余关节使用当前实际状态补全
+    #     if self.current_joint_state is not None:
+    #         for i, name in enumerate(self.current_joint_state.name):
+    #             if name not in joint_state.name:
+    #                 joint_state.name.append(name)
+    #                 joint_state.position.append(self.current_joint_state.position[i])
+    #
+    #     return joint_state
 
-        会将字典中的目标关节加入到消息中，其余关节使用当前实际关节状态填充，
-        以避免 IK 求解器因缺少关节信息而失败。
+    def _get_seed_joint_state(self, group_name: str) -> JointState:
+        """获取 IK 种子关节状态（加锁读取当前实际状态）
+
+        优先使用当前实际关节状态作为 IK 种子，包含全部关节（左臂、右臂均包含其中）。
+        若 current_joint_state 尚未就绪，返回空 JointState 并记录警告。
 
         参数:
-            motor_positions_dict: {电机ID(int或str): 角度(float)}
-            group_name: 规划组名称，用于确定关节映射表
+            group_name: MoveIt 规划组名称（仅用于日志区分左右臂）
+        返回: JointState
         """
-        # 构建 motor_id(int) → joint_name 的映射
-        motor_to_joint = {
-            int(k): v
-            for k, v in {
-                v: k for k, v in self._get_joint_motor_map(group_name).items()
-            }.items()
-        }
+        with self._joint_state_lock:
+            current = copy.copy(self.current_joint_state)  # 浅拷贝，避免长期持锁
 
-        joint_state = JointState()
-        joint_state.header.stamp = self.get_clock().now().to_msg()
+        if current is not None:
+            seed = JointState()
+            seed.header.stamp = self.get_clock().now().to_msg()
+            # 传递全部关节状态作为种子，规划组以外的关节数据也包含在内，以在avoid_collisions为True时参与计算，避免碰撞
+            seed.name     = list(current.name)
+            seed.position = list(current.position)
+            return seed
 
-        # 先填充目标组的关节
-        for motor_id_int in sorted(motor_to_joint.keys()):
-            joint_name = motor_to_joint[motor_id_int]
-            motor_id_str = str(motor_id_int)
-            if motor_id_int in motor_positions_dict:
-                joint_state.name.append(joint_name)
-                joint_state.position.append(motor_positions_dict[motor_id_int])
-            elif motor_id_str in motor_positions_dict:
-                joint_state.name.append(joint_name)
-                joint_state.position.append(motor_positions_dict[motor_id_str])
-
-        # 其余关节使用当前实际状态补全
-        if self.current_joint_state is not None:
-            for i, name in enumerate(self.current_joint_state.name):
-                if name not in joint_state.name:
-                    joint_state.name.append(name)
-                    joint_state.position.append(self.current_joint_state.position[i])
-
-        return joint_state
+        self.get_logger().warn(
+            f'[{group_name}] current_joint_state 尚未就绪，使用空种子姿态'
+        )
+        return JointState()
 
     def call_ik_service_with_params(self, group_name: str, frame_id: str,
                                     position, orientation):
@@ -243,15 +273,9 @@ class ArmControlMixin:
             f'z={normalized_quat.z:.6f}, w={normalized_quat.w:.6f})'
         )
 
-        # 选择 IK 种子
-        if 'right' in group_name:
-            seed_pose = prepare_pose['right_arm'][1]
-        else:
-            seed_pose = prepare_pose['left_arm'][1]
-
+        # 使用当前实际关节状态作为 IK 种子（包含全部关节，左右臂均在其中）
         request.ik_request.robot_state = RobotState()
-        request.ik_request.robot_state.joint_state = \
-            self.create_joint_state_from_motor_dict(seed_pose, group_name)
+        request.ik_request.robot_state.joint_state = self._get_seed_joint_state(group_name)
         request.ik_request.avoid_collisions = True
         request.ik_request.timeout.sec = 5
 
