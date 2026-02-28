@@ -12,21 +12,15 @@ GraspExecutorNode
 ros2 run grab_demo grasp_executor_node
 """
 
-import json
 import threading
 import time
 import traceback
 from enum import Enum, auto
-
 import rclpy
 from rclpy.node import Node
-
-from sensor_msgs.msg import JointState
 from moveit_msgs.srv import GetPositionIK
 from bodyctrl_msgs.msg import CmdSetMotorPosition
-from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
-
 from grab_demo_msgs.msg import GraspCandidate
 from grab_demo.arm_control_mixin import ArmControlMixin, VELOCITY_LIMIT
 from grab_demo.pose_verification_mixin import PoseVerificationMixin
@@ -49,7 +43,6 @@ class GraspExecutorNode(ArmControlMixin, PoseVerificationMixin, Node):
 
         self._init_state()
         self._init_ik_client()
-        self._init_arm_control()
         self._init_tf()
         self._init_grasp_candidate_sub()
         self.group_name = None
@@ -73,23 +66,6 @@ class GraspExecutorNode(ArmControlMixin, PoseVerificationMixin, Node):
             self.get_logger().info('  /compute_ik 未就绪，继续等待...')
         self.get_logger().info('✓ /compute_ik 服务已就绪')
 
-    def _init_arm_control(self):
-        """初始化手臂控制发布者和关节状态订阅"""
-        self.arm_pos_cmd_publisher = self.create_publisher(
-            CmdSetMotorPosition, '/arm/cmd_pos', 10
-        )
-        self.get_logger().info('✓ 手臂控制发布者已创建（/arm/cmd_pos）')
-
-        # 发布 IK 解算结果 JSON，供 GUI 可视化（与 ik_client_node 保持一致）
-        self.joint_command_pub = self.create_publisher(String, '/gui/joint_command', 10)
-        self.get_logger().info('✓ GUI 关节命令发布者已创建（/gui/joint_command）')
-
-        self.current_joint_state = None
-        self.joint_states_sub = self.create_subscription(
-            JointState, '/joint_states', self._joint_states_cb, 10
-        )
-        self.get_logger().info('✓ 已订阅 /joint_states')
-
     def _init_tf(self):
         """初始化 TF2 监听器（用于末端位置验证）"""
         self.tf_buffer   = Buffer()
@@ -105,9 +81,6 @@ class GraspExecutorNode(ArmControlMixin, PoseVerificationMixin, Node):
     # ------------------------------------------------------------------
     # 回调
     # ------------------------------------------------------------------
-
-    def _joint_states_cb(self, msg: JointState):
-        self.current_joint_state = msg
 
     def _grasp_candidate_cb(self, msg: GraspCandidate):
         """收到抓取候选点时触发
@@ -158,8 +131,9 @@ class GraspExecutorNode(ArmControlMixin, PoseVerificationMixin, Node):
                 self._wait_for_user_continue()
                 return
 
-            # ── 阶段 4：发布 IK 结果供 GUI 可视化 ────────────────────
-            self._publish_model_ghost(joint_positions)
+            if hasattr(self, '_publish_model_ghost'):
+                # ── 阶段 4：发布 IK 结果供 GUI 可视化 ────────────────────
+                self._publish_model_ghost(joint_positions)
 
             # ── 阶段 5：用户确认是否执行此位姿 ───────────────────────
             with self.state_lock:
@@ -175,7 +149,7 @@ class GraspExecutorNode(ArmControlMixin, PoseVerificationMixin, Node):
             with self.state_lock:
                 self.state = GraspState.MOVING
 
-            self._execute_arm_movement(joint_positions)
+            self.arm_to_pose(joint_positions, spd=VELOCITY_LIMIT / 2)
 
             # ── 阶段 7：验证末端位置 ──────────────────────────────────
             with self.state_lock:
@@ -232,18 +206,6 @@ class GraspExecutorNode(ArmControlMixin, PoseVerificationMixin, Node):
             return None
 
         return self.extract_joint_positions(response, group_name)
-
-    def _publish_model_ghost(self, joint_positions: dict):
-        """将 {11: 1.023345, 12: 0.567890, ...} 形式的关节角度以 JSON 格式发布到 /gui/joint_command，供 GUI 可视化"""
-        json_str = json.dumps(joint_positions)
-        msg      = String()
-        msg.data = json_str
-        self.joint_command_pub.publish(msg)
-        # self.get_logger().info(f'IK 结果已发布到 /gui/joint_command: {json_str}')
-
-    def _execute_arm_movement(self, joint_positions: dict):
-        """向手臂发送运动命令（含 7s 等待，确保动作完成后再继续）"""
-        self.arm_to_pose(joint_positions, spd=VELOCITY_LIMIT / 2)
 
     # ------------------------------------------------------------------
     # 用户交互方法（运行在后台线程，直接使用 input()）

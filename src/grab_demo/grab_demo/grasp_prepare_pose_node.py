@@ -39,7 +39,6 @@ class GraspPreparePoseNode(ArmControlMixin, Node):
     def __init__(self):
         super().__init__('grasp_prepare_pose_node')
 
-        self._init_arm_control()
         self._init_head_control()
 
         self.get_logger().info('=== GraspPreparePoseNode 已启动 ===')
@@ -47,17 +46,6 @@ class GraspPreparePoseNode(ArmControlMixin, Node):
     # ------------------------------------------------------------------
     # 初始化
     # ------------------------------------------------------------------
-
-    def _init_arm_control(self):
-        """初始化手臂控制发布者和关节状态订阅"""
-        self.arm_pos_cmd_publisher = self.create_publisher(
-            CmdSetMotorPosition, '/arm/cmd_pos', 10
-        )
-        self.get_logger().info('✓ 手臂控制发布者已创建（/arm/cmd_pos）')
-
-        # 发布 IK 解算结果 JSON，供 GUI 可视化（与 ik_client_node 保持一致）
-        self.joint_command_pub = self.create_publisher(String, '/gui/joint_command', 10)
-        self.get_logger().info('✓ GUI 关节命令发布者已创建（/gui/joint_command）')
 
     def _init_head_control(self):
         """初始化头部控制发布者"""
@@ -101,17 +89,6 @@ class GraspPreparePoseNode(ArmControlMixin, Node):
             self.head_pos_cmd_publisher.publish(msg)
             self.get_logger().info("✓ 头部电机位置调整命令已发送")
             time.sleep(1.5)  # 给电机足够的时间运动到位
-
-    def _publish_model_ghost(self, joint_positions: dict):
-        """将 {11: 1.023345, 12: 0.567890, ...} 形式的关节角度以 JSON 格式发布到 /gui/joint_command，供 GUI 可视化"""
-        json_str = json.dumps(joint_positions)
-        msg      = String()
-        msg.data = json_str
-        self.joint_command_pub.publish(msg)
-
-    def _execute_arm_movement(self, joint_positions: dict):
-        """向手臂发送运动命令（含 7s 等待，确保动作完成后再继续）"""
-        self.arm_to_pose(joint_positions, spd=VELOCITY_LIMIT / 2)
 
 def main():
     rclpy.init()
