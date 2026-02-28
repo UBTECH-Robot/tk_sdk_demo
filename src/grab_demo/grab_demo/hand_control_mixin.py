@@ -20,21 +20,17 @@ class HandControlMixin:
         super().__init__(*args, **kwargs)
         self._init_hand_control()
         self.JOINT_NAME_MAP = JOINT_NAME_MAP
-        self.JOINT_ID_SEQUENCE_FOR_OPEN = ["1", "2", "3", "4", "5", "6"]  # 张开时所有手指关节都张开
-        self.JOINT_ID_SEQUENCE_FOR_CLOSE = ["1", "2", "3", "4", "5"]  # 闭合时只闭合前5个关节，保持第6个关节（拇指旋转关节）张开，增加适应性
+        self.JOINT_ID_POS_FOR_OPEN = {"1": 1.0, "2": 1.0, "3": 1.0, "4": 1.0, "5": 1.0, "6": 0.5}  # 张开的位置，保持拇指旋转关节略微弯曲以增加适应性
+        self.JOINT_ID_POS_FOR_CLOSE = {"1": 0.3, "2": 0.3, "3": 0.3, "4": 0.3, "5": 0.3, "6": 0.3}  # 闭合位置
 
     # ------------------------------------------------------------------
     # 初始化
     # ------------------------------------------------------------------
-
     def _init_hand_control(self):
         """初始化手部控制发布者和关节状态订阅"""
         # 保存控制参数
-        self.open_pos_value = 1.0
-        self.close_pos_value = 0.2
         self.tor_value = 0.1
         self.spd_value = 0.1
-        # self.joint_ids = joint_ids if joint_ids else self.JOINT_ID_SEQUENCE
 
         # 位置话题发布器初始化
         self.left_hand_publisher = self.create_publisher(JointState, "/inspire_hand/ctrl/left_hand", 10)
@@ -51,14 +47,14 @@ class HandControlMixin:
     # ------------------------------------------------------------------
     # 内部工具方法
     # ------------------------------------------------------------------
-    def _execute_position_control(self, joint_ids: list, target_value):
+    def _execute_position_control(self, joint_ids: dict):
         """
         位置控制模式执行函数
         
         发布单个关节的位置控制指令，使关节运动到目标位置。
         
         参数：
-            joint_ids (list): 关节ID列表（字符串形式）
+            joint_ids (dict): 关节ID与目标位置的映射（字典形式，键为关节ID，值为目标位置）
         """        
         # 构建位置控制消息
         msg = JointState()
@@ -67,10 +63,10 @@ class HandControlMixin:
         msg.position = []
     
         # 遍历所有关节，依次执行控制
-        for joint_id in joint_ids:
+        for joint_id, target_pos in joint_ids.items():
             joint_name = self.JOINT_NAME_MAP.get(joint_id, f"未知关节{joint_id}")
             msg.name.append(joint_id)
-            msg.position.append(target_value)
+            msg.position.append(target_pos)
 
         # 发布到左右手控制话题
         self.left_hand_publisher.publish(msg)
@@ -80,7 +76,7 @@ class HandControlMixin:
         joint_names = [self.JOINT_NAME_MAP.get(jid, f"未知关节{jid}") for jid in joint_ids]
         self.get_logger().info(
             f"[位置控制] 关节：{', '.join(joint_names)} (IDs: {', '.join(joint_ids)})，"
-            f"目标位置：{target_value}，"
+            f"目标位置：{', '.join(str(pos) for pos in joint_ids.values())}，"
             f"发布消息：{msg}"
         )
 
@@ -188,7 +184,7 @@ class HandControlMixin:
         time.sleep(0.5)
         self.set_speed(self.spd_value)
         time.sleep(0.5)
-        self._execute_position_control(self.JOINT_ID_SEQUENCE_FOR_OPEN, self.open_pos_value)
+        self._execute_position_control(self.JOINT_ID_POS_FOR_OPEN)
 
     def hand_close(self):
         """执行手部闭合动作"""        
@@ -196,4 +192,4 @@ class HandControlMixin:
         time.sleep(0.5)
         self.set_speed(self.spd_value)
         time.sleep(0.5)
-        self._execute_position_control(self.JOINT_ID_SEQUENCE_FOR_CLOSE, self.close_pos_value)
+        self._execute_position_control(self.JOINT_ID_POS_FOR_CLOSE)
