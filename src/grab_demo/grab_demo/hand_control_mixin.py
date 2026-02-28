@@ -16,7 +16,7 @@ JOINT_NAME_MAP = {
     "6": "拇指旋转",
 }
 open_pose = 1.0
-close_pose = 0.8
+close_pose = 0.7
 class HandControlMixin:
     def __init__(self, *args, **kwargs):
         # 通过 super() 沿 MRO 链传递参数，确保 Node.__init__ 被正确调用
@@ -51,7 +51,7 @@ class HandControlMixin:
     # ------------------------------------------------------------------
     # 内部工具方法
     # ------------------------------------------------------------------
-    def _execute_position_control(self, joint_ids: dict):
+    def _execute_position_control(self, joint_ids: dict, group_name: str = None):
         """
         位置控制模式执行函数
         
@@ -73,8 +73,13 @@ class HandControlMixin:
             msg.position.append(target_pos)
 
         # 发布到左右手控制话题
-        self.left_hand_publisher.publish(msg)
-        self.right_hand_publisher.publish(msg)
+        if 'left' in group_name:
+            self.left_hand_publisher.publish(msg)
+        if 'right' in group_name:
+            self.right_hand_publisher.publish(msg)
+        if 'left' not in group_name and 'right' not in group_name:
+            self.get_logger().info("未指定左右手，不控制手指位置")
+            return
 
         # 输出控制日志
         joint_names = [self.JOINT_NAME_MAP.get(jid, f"未知关节{jid}") for jid in joint_ids]
@@ -83,6 +88,8 @@ class HandControlMixin:
             f"目标位置：{', '.join(str(pos) for pos in joint_ids.values())}，"
             f"发布消息：{msg}"
         )
+
+        time.sleep(1.5)  # 等待运动完成
 
     def set_force(self, force_value : float):
         """
@@ -182,21 +189,21 @@ class HandControlMixin:
         except Exception as e:
             self.get_logger().error(f"速度控制服务调用失败: {e}")
 
-    def hand_open(self):
+    def hand_open(self, group_name: str = None):
         """执行手部张开动作"""
         self.set_force(self.tor_value)
         time.sleep(0.5)
         self.set_speed(self.spd_value)
         time.sleep(0.5)
-        self._execute_position_control(self.JOINT_ID_POS_FOR_OPEN)
+        self._execute_position_control(self.JOINT_ID_POS_FOR_OPEN, group_name)
 
-    def hand_close(self):
+    def hand_close(self, group_name: str = None):
         """执行手部闭合动作"""        
         self.set_force(self.tor_value)
         time.sleep(0.5)
         self.set_speed(self.spd_value)
         time.sleep(0.5)
-        self._execute_position_control(self.JOINT_ID_POS_FOR_CLOSE)
+        self._execute_position_control(self.JOINT_ID_POS_FOR_CLOSE, group_name)
 
 class HandControl(HandControlMixin, Node):
     def __init__(self):

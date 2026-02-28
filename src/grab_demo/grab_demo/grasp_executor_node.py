@@ -42,6 +42,8 @@ arm_safe_pose = {
     'right_arm': {21: 1.0, 22: -0.28, 23: -0.26, 24: -2.2, 25: -0.2, 26: 0.0, 27: 0.0},
 }
 
+PRE_GRASP_Z_OFFSET = 0.10  # 先移动到目标上方 10cm，降低贴桌面曲线运动碰撞风险
+
 # ============ 状态机 ============
 class GraspState(Enum):
     IDLE       = auto()   # 等待候选点
@@ -139,36 +141,60 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
                 print('手臂未到达准备姿态，取消本次抓取。')
                 self._wait_for_user_continue()
                 return
+            
+            self.hand_open(candidate.group_name)  # 确保手指张开
 
-            # ── 阶段 3：IK 解算 ───────────────────────────────────────
-            joint_positions = self._solve_ik(candidate)
-            if joint_positions is None:
-                self.get_logger().error('IK 解算失败，取消本次抓取')
+            # ── 阶段 3：预抓取位姿 IK 解算（抬高 Z）───────────────────
+            pre_grasp_joint_positions = self._solve_ik(candidate, z_offset=PRE_GRASP_Z_OFFSET)
+            if pre_grasp_joint_positions is None:
+                self.get_logger().error('预抓取位姿 IK 解算失败，取消本次抓取')
                 self._wait_for_user_continue()
                 return
 
-            if hasattr(self, '_publish_model_ghost'):
-                # ── 阶段 4：发布 IK 结果供 GUI 可视化 ────────────────────
-                self._publish_model_ghost(joint_positions)
+            # ── 阶段 4：发布预抓取位姿并确认 ─────────────────────────
+            self._publish_model_ghost(pre_grasp_joint_positions)
 
-            # ── 阶段 5：用户确认是否执行此位姿 ───────────────────────
             with self.state_lock:
                 self.state = GraspState.CONFIRMING
 
-            should_move = self._prompt_confirm_action('是否移动到目标所在位姿？')
-            if not should_move:
+            should_move_pre_grasp = self._prompt_confirm_action('是否先移动到目标上方安全位姿？')
+            if not should_move_pre_grasp:
                 print('用户已放弃本次抓取。')
                 self._wait_for_user_continue()
                 return
 
-            # ── 阶段 6：执行手臂运动 ──────────────────────────────────
+            # ── 阶段 5：移动到预抓取位姿 ────────────────────────────
             with self.state_lock:
                 self.state = GraspState.MOVING
 
-            self.hand_open()  # 确保手指张开
-            self.arm_to_pose(joint_positions, spd=VELOCITY_LIMIT / 2)
+            self.arm_to_pose(pre_grasp_joint_positions, spd=VELOCITY_LIMIT / 2)
 
-            # ── 阶段 7：验证末端位置 ──────────────────────────────────
+            # ── 阶段 6：最终抓取位姿 IK 解算 ─────────────────────────
+            final_joint_positions = self._solve_ik(candidate)
+            if final_joint_positions is None:
+                self.get_logger().error('最终抓取位姿 IK 解算失败，取消本次抓取')
+                self._wait_for_user_continue()
+                return
+
+            # ── 阶段 7：发布最终抓取位姿并确认 ───────────────────────
+            self._publish_model_ghost(final_joint_positions)
+
+            with self.state_lock:
+                self.state = GraspState.CONFIRMING
+
+            should_move_final = self._prompt_confirm_action('是否从上方下探到目标抓取位姿？')
+            if not should_move_final:
+                print('用户已放弃本次抓取。')
+                self._wait_for_user_continue()
+                return
+
+            # ── 阶段 8：执行最终下探运动 ─────────────────────────────
+            with self.state_lock:
+                self.state = GraspState.MOVING
+
+            self.arm_to_pose(final_joint_positions, spd=VELOCITY_LIMIT / 2)
+
+            # ── 阶段 9：验证末端位置 ──────────────────────────────────
             with self.state_lock:
                 self.state = GraspState.VERIFYING
 
@@ -185,7 +211,7 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
                 self._wait_for_user_continue()
                 return
 
-            # ── 阶段 8：询问用户是否执行抓取 ─────────────────────────
+            # ── 阶段 10：询问用户是否执行抓取 ────────────────────────
             with self.state_lock:
                 self.state = GraspState.CONFIRMING
 
@@ -196,11 +222,11 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
                 self._wait_for_user_continue()
                 return
 
-            self.hand_close()
+            self.hand_close(candidate.group_name)
 
             self.arm_to_pose(arm_safe_pose[candidate.group_name], spd=VELOCITY_LIMIT / 2)  # 运动到安全姿态
 
-            # ── 阶段 9：放置 ──────────────────────────────────────────
+            # ── 阶段 11：放置 ─────────────────────────────────────────
             with self.state_lock:
                 self.state = GraspState.PLACING
 
@@ -213,11 +239,11 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
             time.sleep(2.0)
             print(f'✓ 已将物体放置到: {place_location["name"]}')
 
-            self.hand_open()  # 放开物体
+            self.hand_open(candidate.group_name)  # 放开物体
 
             self.arm_to_pose(arm_safe_pose[candidate.group_name], spd=VELOCITY_LIMIT / 2)  # 运动到安全姿态
 
-            # ── 阶段 9：全流程成功→手臂退回安全姿态 ─────────────
+            # ── 阶段 12：全流程成功→手臂退回安全姿态 ────────────
             self.arm_pose_reverse_init()
 
             self._wait_for_user_continue()
@@ -233,14 +259,19 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
     # IK + 手臂运动（拆分为独立步骤，由 _run_grasp_sequence 编排）
     # ------------------------------------------------------------------
 
-    def _solve_ik(self, candidate: GraspCandidate) -> dict | None:
-        """仅执行 IK 解算，返回关节角度字典（失败返回 None）"""
+    def _solve_ik(self, candidate: GraspCandidate, z_offset: float = 0.0) -> dict | None:
+        """执行 IK 解算，支持对目标 z 施加偏移（失败返回 None）"""
         pos        = candidate.pose.pose.position
         orient     = candidate.pose.pose.orientation
         frame_id   = candidate.pose.header.frame_id or 'pelvis'
         group_name = candidate.group_name or 'left_arm'
 
-        response = self.call_ik_service_with_params(group_name, frame_id, pos, orient)
+        target_pos = type(pos)()
+        target_pos.x = pos.x
+        target_pos.y = pos.y
+        target_pos.z = pos.z + z_offset
+
+        response = self.call_ik_service_with_params(group_name, frame_id, target_pos, orient)
         if response is None:
             return None
 
