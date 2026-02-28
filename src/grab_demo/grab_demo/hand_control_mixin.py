@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
+import argparse
 import time
 import rclpy
+from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from bodyctrl_msgs.srv import SetForce, SetSpeed, SetClearError
 
@@ -13,15 +15,17 @@ JOINT_NAME_MAP = {
     "5": "拇指弯曲",
     "6": "拇指旋转",
 }
-
+open_pose = 1.0
+close_pose = 0.8
 class HandControlMixin:
     def __init__(self, *args, **kwargs):
         # 通过 super() 沿 MRO 链传递参数，确保 Node.__init__ 被正确调用
         super().__init__(*args, **kwargs)
         self._init_hand_control()
         self.JOINT_NAME_MAP = JOINT_NAME_MAP
-        self.JOINT_ID_POS_FOR_OPEN = {"1": 1.0, "2": 1.0, "3": 1.0, "4": 1.0, "5": 1.0, "6": 0.5}  # 张开的位置，保持拇指旋转关节略微弯曲以增加适应性
-        self.JOINT_ID_POS_FOR_CLOSE = {"1": 0.3, "2": 0.3, "3": 0.3, "4": 0.3, "5": 0.3, "6": 0.3}  # 闭合位置
+
+        self.JOINT_ID_POS_FOR_OPEN = {"1":open_pose, "2": open_pose, "3": open_pose, "4": open_pose, "5": open_pose, "6": 0.0}  # 张开的位置，保持拇指旋转关节略微弯曲以增加适应性
+        self.JOINT_ID_POS_FOR_CLOSE = {"1": close_pose, "2": close_pose, "3": close_pose, "4": close_pose, "5": close_pose, "6": 0.0}  # 闭合位置
 
     # ------------------------------------------------------------------
     # 初始化
@@ -29,8 +33,8 @@ class HandControlMixin:
     def _init_hand_control(self):
         """初始化手部控制发布者和关节状态订阅"""
         # 保存控制参数
-        self.tor_value = 0.1
-        self.spd_value = 0.1
+        self.tor_value = 0.2
+        self.spd_value = 0.3
 
         # 位置话题发布器初始化
         self.left_hand_publisher = self.create_publisher(JointState, "/inspire_hand/ctrl/left_hand", 10)
@@ -193,3 +197,38 @@ class HandControlMixin:
         self.set_speed(self.spd_value)
         time.sleep(0.5)
         self._execute_position_control(self.JOINT_ID_POS_FOR_CLOSE)
+
+class HandControl(HandControlMixin, Node):
+    def __init__(self):
+        super().__init__("hand_control")
+
+def _parse_args():
+    parser = argparse.ArgumentParser(description="手部开合控制节点")
+    parser.add_argument(
+        "action",
+        choices=["open", "close"],
+        help="控制动作：open=张开，close=闭合",
+    )
+    return parser.parse_args()
+
+# 测试手指张开和闭合，模拟抓取和放置动作
+def main():
+    args = _parse_args()
+    rclpy.init()
+    node = HandControl()
+
+    try:
+        if args.action == "open":
+            node.get_logger().info("执行手部张开动作")
+            node.hand_open()
+        else:
+            node.get_logger().info("执行手部闭合动作")
+            node.hand_close()
+        time.sleep(0.2)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()

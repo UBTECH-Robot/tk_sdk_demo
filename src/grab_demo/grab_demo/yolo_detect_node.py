@@ -1454,14 +1454,13 @@ class YoloDetectNode(Node):
         if pose_stamped is not None:
             self._publish_grasp_candidate(pose_stamped, results[0].boxes[0])
 
-    def _publish_grasp_candidate(self, pose_stamped: PoseStamped, box,
-                                  group_name: str = 'left_arm'):
+    def _publish_grasp_candidate(self, pose_stamped: PoseStamped, box):
         """将检测结果打包为 GraspCandidate 消息发布给执行节点"""
         msg = GraspCandidate()
         msg.header.stamp    = self.get_clock().now().to_msg()
         msg.header.frame_id = pose_stamped.header.frame_id
         msg.pose            = pose_stamped
-        msg.group_name      = group_name
+        msg.group_name      = "left_arm" if pose_stamped.pose.position.y > 0 else "right_arm"
         msg.confidence      = float(box.conf[0].cpu().numpy())
         cls                 = int(box.cls[0].cpu().numpy())
         msg.object_class    = self.class_names.get(cls, 'unknown')

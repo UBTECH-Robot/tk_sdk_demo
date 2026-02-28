@@ -155,8 +155,8 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
             with self.state_lock:
                 self.state = GraspState.CONFIRMING
 
-            should_grasp = self._prompt_execute_arm_move()
-            if not should_grasp:
+            should_move = self._prompt_confirm_action('是否移动到目标所在位姿？')
+            if not should_move:
                 print('用户已放弃本次抓取。')
                 self._wait_for_user_continue()
                 return
@@ -189,7 +189,7 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
             with self.state_lock:
                 self.state = GraspState.CONFIRMING
 
-            should_close = self._prompt_execute_grasp()
+            should_close = self._prompt_confirm_action('是否执行抓取（闭合手指）？')
             if not should_close:
                 print('用户已放弃抓取，手臂退回安全姿态。')
                 self.arm_pose_reverse_init()
@@ -197,6 +197,8 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
                 return
 
             self.hand_close()
+
+            self.arm_to_pose(arm_safe_pose[candidate.group_name], spd=VELOCITY_LIMIT / 2)  # 运动到安全姿态
 
             # ── 阶段 9：放置 ──────────────────────────────────────────
             with self.state_lock:
@@ -259,26 +261,11 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
         print(f'  坐标系   : {candidate.pose.header.frame_id}')
         print('=' * 50)
 
-    def _prompt_execute_arm_move(self) -> bool:
-        """询问用户是否移动到目标所在位姿？，返回 True 表示确认"""
+    def _prompt_confirm_action(self, question: str) -> bool:
+        """通用 yes/no 交互确认，返回 True 表示确认执行"""
         while True:
             user_input = input(
-                '\n是否移动到目标所在位姿？\n'
-                '  输入 yes/y 执行\n'
-                '  输入 no/n  放弃\n'
-                '请选择: '
-            ).strip().lower()
-            if user_input in ('yes', 'y'):
-                return True
-            if user_input in ('no', 'n'):
-                return False
-            print('✗ 无效输入，请输入 yes/y 或 no/n')
-
-    def _prompt_execute_grasp(self) -> bool:
-        """询问用户是否执行抓取（闭合手指），返回 True 表示确认"""
-        while True:
-            user_input = input(
-                '\n是否执行抓取（闭合手指）？\n'
+                f'\n{question}\n'
                 '  输入 yes/y 执行\n'
                 '  输入 no/n  放弃\n'
                 '请选择: '

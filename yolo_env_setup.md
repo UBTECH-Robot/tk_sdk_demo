@@ -178,3 +178,8 @@ ros2 service call /compute_ik moveit_msgs/srv/GetPositionIK "
     timeout: { sec: 2 }
   }
 }"
+
+相机服务挂掉时，模拟相机USB拔插，然后重启服务：
+echo 0 | sudo tee /sys/bus/usb/devices/2-2/authorized >/dev/null
+echo 1 | sudo tee /sys/bus/usb/devices/2-2/authorized >/dev/null
+sudo systemctl restart orbbec_head.service
