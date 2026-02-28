@@ -33,16 +33,16 @@ from bodyctrl_msgs.msg import CmdSetMotorPosition, SetMotorPosition
 # ============ 全局运动参数 ============
 VELOCITY_LIMIT = 0.4   # 速度限制（弧度/秒）
 CURRENT_LIMIT  = 5.0   # 电流限制（安培）
+POSE_MATCH_ABS_TOL = math.radians(1.0)  # 姿态匹配绝对误差阈值（约 1°）
 
-# IK 种子姿态：提供一个合理的初始关节角度，帮助 IK 找到好的解
 prepare_pose = {
     "left_arm": [
-        {11: 0.5, 12: 0.15, 13: 0.2, 14: -0.9,  15: 0.2,  16: 0.0, 17: 0.0},
-        {11: 0.5, 12: 0.4, 13: 0.3, 14: -2.0, 15: 0.2, 16: 0.0, 17: 0.0},
+        {11: 0.5, 12: 0.15, 13: 0.3, 14: -0.9,  15: 0.2,  16: 0.0, 17: 0.0},
+        {11: 0.5, 12: 0.4, 13: 0.6, 14: -2.5, 15: 0.2, 16: 0.0, 17: 0.0},
     ],
     "right_arm": [
-        {21: 0.5, 22: -0.15, 23: -0.2, 24: -0.9, 25: -0.2, 26: 0.0, 27: 0.0},
-        {21: 0.5, 22: -0.4, 23: -0.3, 24: -2.0, 25: -0.2, 26: 0.0, 27: 0.0},
+        {21: 0.5, 22: -0.15, 23: -0.3, 24: -0.9, 25: -0.2, 26: 0.0, 27: 0.0},
+        {21: 0.5, 22: -0.4, 23: -0.6, 24: -2.5, 25: -0.2, 26: 0.0, 27: 0.0},
     ],
 }
 
@@ -50,11 +50,13 @@ end_pose_sequence = {
     "left_arm": [
         {11: 0.5, 12: 0.4, 13: 0.3, 14: -2.0, 15: 0.2, 16: 0.0, 17: 0.0},
         {11: 1.2, 12: 0.4, 13: 0.2, 14: -2.5, 15: 0.2, 16: 0.0, 17: 0.0},
+        {11: 1.2, 12: 0.4, 13: 0.3, 14: -1.7, 15: 0.2, 16: 0.0, 17: 0.0},
         {11: 0.5, 12: 0.15, 13: 0.2, 14: -0.9, 15: 0.2, 16: 0.0, 17: 0.0},
     ],
     "right_arm": [
         {21: 0.5, 22: -0.4, 23: -0.3, 24: -2.0, 25: -0.2, 26: 0.0, 27: 0.0},
         {21: 1.2, 22: -0.4, 23: -0.2, 24: -2.5, 25: -0.2, 26: 0.0, 27: 0.0},
+        {21: 1.2, 22: -0.4, 23: -0.3, 24: -1.7, 25: -0.2, 26: 0.0, 27: 0.0},
         {21: 0.5, 22: -0.15, 23: -0.2, 24: -0.9, 25: -0.2, 26: 0.0, 27: 0.0},
     ],
 }
@@ -119,6 +121,8 @@ class ArmControlMixin:
     def __init__(self, *args, **kwargs):
         # 通过 super() 沿 MRO 链传递参数，确保 Node.__init__ 被正确调用
         super().__init__(*args, **kwargs)
+        self.prepare_pose = prepare_pose
+        self.end_pose_sequence = end_pose_sequence
         self._init_arm_control()
 
     # ------------------------------------------------------------------
@@ -333,13 +337,94 @@ class ArmControlMixin:
 
         return None
 
-    def arm_to_pose(self, pose: dict, spd: float = VELOCITY_LIMIT):
+    def is_pose_match_current_pose(self, target_pose: dict) -> bool:
+        """判断目标电机姿态是否与当前关节状态一致。
+
+        参数:
+            target_pose: {电机ID(int或str): 目标角度(float)}
+
+        返回:
+            True: target_pose 中所有关节都与 current_joint_state 对应关节一致
+            False: 任一关节不一致 / 关节缺失 / current_joint_state 未就绪
+        """
+        with self._joint_state_lock:
+            current = copy.copy(self.current_joint_state)
+
+        if current is None:
+            self.get_logger().warn('current_joint_state 尚未就绪，无法比较姿态')
+            return False
+
+        # 电机ID(str) -> 关节名
+        motor_to_joint_map = {
+            **{motor_id: joint_name for joint_name, motor_id in _LEFT_ARM_JOINT_MOTOR_MAP.items()},
+            **{motor_id: joint_name for joint_name, motor_id in _RIGHT_ARM_JOINT_MOTOR_MAP.items()},
+        }
+
+        # 当前关节名 -> 当前角度
+        current_joint_pos = {
+            joint_name: joint_pos
+            for joint_name, joint_pos in zip(current.name, current.position)
+        }
+
+        for motor_id, target_value in target_pose.items():
+            motor_id_str = str(motor_id)
+            joint_name = motor_to_joint_map.get(motor_id_str)
+            if joint_name is None:
+                self.get_logger().warn(f'未知电机ID: {motor_id_str}，无法比较姿态')
+                return False
+
+            if joint_name not in current_joint_pos:
+                self.get_logger().warn(f'当前关节状态缺少关节: {joint_name}')
+                return False
+
+            current_value = current_joint_pos[joint_name]
+            if not math.isclose(float(target_value), float(current_value), abs_tol=POSE_MATCH_ABS_TOL):
+                self.get_logger().info(
+                    f'关节 {joint_name}（电机{motor_id_str}）姿态不匹配：'
+                    f'目标 {target_value:.5f} rad vs 当前 {current_value:.5f} rad'
+                )
+                return False
+
+        return True
+
+    def arm_to_pose(
+        self,
+        pose: dict,
+        spd: float = VELOCITY_LIMIT,
+        publish_ghost: bool = True,
+        require_confirm: bool = True,
+        confirm_prompt: str = '是否移动手臂到目标位姿？',
+    ) -> bool:
         """将手臂移动到指定关节角度
 
         参数:
             pose: {电机ID(int或str): 目标角度(float)}
             spd:  运动速度（弧度/秒），默认使用 VELOCITY_LIMIT
+            publish_ghost: 是否在发送运动命令前自动发布一次 GUI 预览
+            require_confirm: 是否在发送运动前进行 yes/no 交互确认
+            confirm_prompt: 用户确认提示语
+
+        返回:
+            True: 已执行运动命令
+            False: 用户取消运动
         """
+        if publish_ghost:
+            self._publish_model_ghost(pose)
+
+        if require_confirm:
+            while True:
+                user_input = input(
+                    f'\n{confirm_prompt}\n'
+                    '  输入 yes/y 执行\n'
+                    '  输入 no/n  放弃\n'
+                    '请选择: '
+                ).strip().lower()
+                if user_input in ('yes', 'y'):
+                    break
+                if user_input in ('no', 'n'):
+                    return False
+                print('✗ 无效输入，请输入 yes/y 或 no/n')
+
         header = self._create_header()
         msg = CmdSetMotorPosition()
         msg.header = header
@@ -351,13 +436,14 @@ class ArmControlMixin:
             cmd.spd  = spd
             cmd.cur  = CURRENT_LIMIT
             msg.cmds.append(cmd)
-            self.get_logger().info(f'  电机 {k}：运动到目标位置（{v:.4f} rad）')
+            # self.get_logger().info(f'  电机 {k}：运动到目标位置（{v:.4f} rad）')
 
         self.arm_pos_cmd_publisher.publish(msg)
         self.get_logger().info('✓ 手臂运动命令已发送')
 
         # 等待手臂运动完成（IK 最多 5s + 运动 6s，取 7s 作为安全余量）
         time.sleep(7.0)
+        return True
 
     def _publish_model_ghost(self, joint_positions: dict):
         """将关节角度以 JSON 格式发布到 /gui/joint_command，供 GUI 可视化
@@ -379,19 +465,16 @@ class ArmControlMixin:
         right_arm_poses = prepare_pose['right_arm']
         for idx, left_pose in enumerate(left_arm_poses):
             merged_pose = {**left_pose, **right_arm_poses[idx]}
-            self._publish_model_ghost(merged_pose)
-            time.sleep(0.5)
-            self._publish_model_ghost(merged_pose)  # 再次发布，确保 GUI 收到
-            time.sleep(0.5)
-
-            user_input = input(
-                f'\n[{idx + 1}/{len(left_arm_poses)}] '
-                f'是否移动手臂到第 {idx + 1} 个过渡姿态？'
-                f'  (yes/y 确认, no/n 中止): '
-            ).strip().lower()
-            if user_input in ('yes', 'y'):
-                self.arm_to_pose(merged_pose)
-            else:
+            ok = self.arm_to_pose(
+                merged_pose,
+                publish_ghost=True,
+                require_confirm=True,
+                confirm_prompt=(
+                    f'[{idx + 1}/{len(left_arm_poses)}] '
+                    f'是否移动手臂到第 {idx + 1} 个过渡姿态？'
+                ),
+            )
+            if not ok:
                 print('✓ 手臂过渡已中止')
                 return False
         return True
@@ -405,20 +488,16 @@ class ArmControlMixin:
         right_arm_end_pose = end_pose_sequence['right_arm']
         for idx, left_pose in enumerate(left_arm_end_pose):
             merged_pose = {**left_pose, **right_arm_end_pose[idx]}
-
-            self._publish_model_ghost(merged_pose)
-            time.sleep(0.5)
-            self._publish_model_ghost(merged_pose)  # 再次发布，确保 GUI 收到
-            time.sleep(0.5)
-                
-            user_input = input(
-                f'\n[{idx + 1}/{len(left_arm_end_pose)}] '
-                f'是否移动手臂到第 {idx + 1} 个中止姿态？'
-                f'  (yes/y 确认, no/n 中止): '
-            ).strip().lower()
-            if user_input in ('yes', 'y'):
-                self.arm_to_pose(merged_pose)
-            else:
+            ok = self.arm_to_pose(
+                merged_pose,
+                publish_ghost=True,
+                require_confirm=True,
+                confirm_prompt=(
+                    f'[{idx + 1}/{len(left_arm_end_pose)}] '
+                    f'是否移动手臂到第 {idx + 1} 个中止姿态？'
+                ),
+            )
+            if not ok:
                 print('✓ 手臂移动已中止')
                 return False
             

@@ -1165,9 +1165,9 @@ class YoloDetectNode(Node):
         if coords_base['success']:
             # 变换成功：使用基座坐标系
             pose_stamped.header.frame_id = coords_base['frame_id']
-            pose_stamped.pose.position.x = coords_base['X'] - 0.07
-            pose_stamped.pose.position.y = coords_base['Y'] + 0.07
-            pose_stamped.pose.position.z = coords_base['Z']
+            pose_stamped.pose.position.x = coords_base['X'] - 0.13
+            pose_stamped.pose.position.y = coords_base['Y'] + 0.08
+            pose_stamped.pose.position.z = coords_base['Z'] #- 0.01
             
             # self.get_logger().info(
             #     f"✓ 抓取点在 ({coords_base['frame_id']}) 坐标系内的坐标，将进行IK解算: \n"

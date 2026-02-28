@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """
-GraspPreparePoseNode
+PoseNode
 
 抓取准备节点。在抓取开始前，将手臂、头部、手指初始化到准备姿态。
 
-ros2 run grab_demo grasp_prepare_pose_node
-"""
+双臂收回到结束姿态：
+python /home/nvidia/sdk_demo/src/grab_demo/grab_demo/pose_node.py e
 
+双臂进入准备状态：
+python /home/nvidia/sdk_demo/src/grab_demo/grab_demo/pose_node.py p
+"""
+import argparse
 import time
 import rclpy
 from rclpy.node import Node
@@ -19,9 +23,9 @@ prepare_pose = {
     ]
 }
 
-class GraspPreparePoseNode(ArmControlMixin, HandControlMixin, Node):
+class PoseNode(ArmControlMixin, HandControlMixin, Node):
     def __init__(self):
-        super().__init__('grasp_prepare_pose_node')
+        super().__init__('pose_node')
 
         self._init_head_control()
 
@@ -39,7 +43,7 @@ class GraspPreparePoseNode(ArmControlMixin, HandControlMixin, Node):
     def hand_pose_init(self):
         """手指初始化为张开状态"""
         self.get_logger().info('执行手指张开初始化...')
-        self.hand_open()
+        self.hand_open('left_right')  # 同时张开左右手
         self.get_logger().info('✓ 手指已张开')
 
     def head_pose_init(self):
@@ -77,15 +81,30 @@ class GraspPreparePoseNode(ArmControlMixin, HandControlMixin, Node):
             self.get_logger().info("✓ 头部电机位置调整命令已发送")
             time.sleep(1.5)  # 给电机足够的时间运动到位
 
+def _parse_args():
+    parser = argparse.ArgumentParser(description="手部开合控制节点")
+    parser.add_argument(
+        "action",
+        choices=["p", "e"],
+        help="控制动作：p=准备姿态，e=结束姿态",
+    )
+    return parser.parse_args()
+
 def main():
+    args = _parse_args()
+
     rclpy.init()
-    node = GraspPreparePoseNode()
+    node = PoseNode()
     try:
-        node.arm_pose_init()
+        if args.action == "p": # prepare
 
-        node.head_pose_init()
+            node.arm_pose_init()
 
-        node.hand_pose_init()
+            node.head_pose_init()
+
+            node.hand_pose_init()
+        elif args.action == "e": # end
+            node.arm_pose_reverse_init()
 
     except KeyboardInterrupt:
         print('\n用户中断程序')
