@@ -26,6 +26,21 @@ from grab_demo.arm_control_mixin import ArmControlMixin, VELOCITY_LIMIT
 from grab_demo.hand_control_mixin import HandControlMixin
 from grab_demo.pose_verification_mixin import PoseVerificationMixin
 
+place_locations = {
+    '1': {'id': '1', 'name': '左前方',  'description': '桌子左侧前方', 'pose': {
+        'left_arm': {11: -0.1, 12: 0.65, 13: 0.3, 14: -1.28, 15: 0.2, 16: 0.0, 17: 0.0},
+        'right_arm': {21: -0.8, 22: -0.28, 23: 0.63, 24: -1.0, 25: -0.2, 26: 0.0, 27: 0.0},
+    }},
+    '2': {'id': '2', 'name': '右前方',  'description': '桌子右侧前方', 'pose': {
+        'left_arm': {11: -0.80, 12: 0.28, 13: -0.63, 14: -1.0, 15: 0.2, 16: 0.0, 17: 0.0},
+        'right_arm': {21: -0.1, 22: -0.65, 23: -0.3, 24: -1.28, 25: -0.2, 26: 0.0, 27: 0.0},
+    }},
+}
+
+arm_safe_pose = {
+    'left_arm': {11: 1.0, 12: 0.28, 13: 0.26, 14: -2.2, 15: 0.2, 16: 0.0, 17: 0.0},
+    'right_arm': {21: 1.0, 22: -0.28, 23: -0.26, 24: -2.2, 25: -0.2, 26: 0.0, 27: 0.0},
+}
 
 # ============ 状态机 ============
 class GraspState(Enum):
@@ -140,7 +155,7 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
             with self.state_lock:
                 self.state = GraspState.CONFIRMING
 
-            should_grasp = self._prompt_execute_grasp()
+            should_grasp = self._prompt_execute_arm_move()
             if not should_grasp:
                 print('用户已放弃本次抓取。')
                 self._wait_for_user_continue()
@@ -170,15 +185,35 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
                 self._wait_for_user_continue()
                 return
 
-            # ── 阶段 8：放置 ──────────────────────────────────────────
+            # ── 阶段 8：询问用户是否执行抓取 ─────────────────────────
+            with self.state_lock:
+                self.state = GraspState.CONFIRMING
+
+            should_close = self._prompt_execute_grasp()
+            if not should_close:
+                print('用户已放弃抓取，手臂退回安全姿态。')
+                self.arm_pose_reverse_init()
+                self._wait_for_user_continue()
+                return
+
+            self.hand_close()
+
+            # ── 阶段 9：放置 ──────────────────────────────────────────
             with self.state_lock:
                 self.state = GraspState.PLACING
 
             place_location = self._prompt_place_location()
             self.get_logger().info(f'准备放置到: {place_location["name"]}')
-            # TODO: 添加具体的放置动作（发布手臂命令到放置位置）
+            put_pose = place_location['pose'][candidate.group_name]
+            
+            self.arm_to_pose(put_pose, spd=VELOCITY_LIMIT / 2)
+
             time.sleep(2.0)
             print(f'✓ 已将物体放置到: {place_location["name"]}')
+
+            self.hand_open()  # 放开物体
+
+            self.arm_to_pose(arm_safe_pose[candidate.group_name], spd=VELOCITY_LIMIT / 2)  # 运动到安全姿态
 
             # ── 阶段 9：全流程成功→手臂退回安全姿态 ─────────────
             self.arm_pose_reverse_init()
@@ -224,11 +259,26 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
         print(f'  坐标系   : {candidate.pose.header.frame_id}')
         print('=' * 50)
 
-    def _prompt_execute_grasp(self) -> bool:
-        """询问用户是否执行抓取，返回 True 表示确认"""
+    def _prompt_execute_arm_move(self) -> bool:
+        """询问用户是否移动到目标所在位姿？，返回 True 表示确认"""
         while True:
             user_input = input(
-                '\n是否执行抓取？\n'
+                '\n是否移动到目标所在位姿？\n'
+                '  输入 yes/y 执行\n'
+                '  输入 no/n  放弃\n'
+                '请选择: '
+            ).strip().lower()
+            if user_input in ('yes', 'y'):
+                return True
+            if user_input in ('no', 'n'):
+                return False
+            print('✗ 无效输入，请输入 yes/y 或 no/n')
+
+    def _prompt_execute_grasp(self) -> bool:
+        """询问用户是否执行抓取（闭合手指），返回 True 表示确认"""
+        while True:
+            user_input = input(
+                '\n是否执行抓取（闭合手指）？\n'
                 '  输入 yes/y 执行\n'
                 '  输入 no/n  放弃\n'
                 '请选择: '
@@ -241,13 +291,6 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
 
     def _prompt_place_location(self) -> dict:
         """询问用户选择放置位置，返回选定位置信息字典"""
-        place_locations = {
-            '1': {'id': '1', 'name': '左前方',  'description': '桌子左侧前方'},
-            '2': {'id': '2', 'name': '中央',    'description': '桌子正前方中央'},
-            '3': {'id': '3', 'name': '右前方',  'description': '桌子右侧前方'},
-            '4': {'id': '4', 'name': '左侧',    'description': '桌子左侧'},
-            '5': {'id': '5', 'name': '右侧',    'description': '桌子右侧'},
-        }
 
         print('\n' + '-' * 50)
         print('请选择放置位置：')
