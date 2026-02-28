@@ -68,7 +68,7 @@ from bodyctrl_msgs.srv import SetForce, SetSpeed, SetClearError
 
 
 class InspireHandControllerDemo(Node):
-    """灵巧手多控制节点
+    """灵巧手控制节点
     
     按顺序执行一次动作，完成后自动退出。
     

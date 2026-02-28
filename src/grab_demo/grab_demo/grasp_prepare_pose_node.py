@@ -1,41 +1,25 @@
 #!/usr/bin/env python3
 """
-GraspExecutorNode
+GraspPreparePoseNode
 
-抓取执行节点。订阅 /grasp_candidate 话题，接收来自感知节点的抓取候选点，
-按以下状态机驱动完整的抓取-放置流程：
+抓取准备节点。在抓取开始前，将手臂、头部、手指初始化到准备姿态。
 
-    IDLE → CONFIRMING → MOVING → VERIFYING → PLACING → IDLE
-
-用户交互（input()）运行在独立后台线程，不阻塞 rclpy.spin。
-
-ros2 run grab_demo grasp_executor_node
+ros2 run grab_demo grasp_prepare_pose_node
 """
 
-import json
-import threading
 import time
-import traceback
-from enum import Enum, auto
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import JointState
-from moveit_msgs.srv import GetPositionIK
 from bodyctrl_msgs.msg import CmdSetMotorPosition, SetMotorPosition
-from std_msgs.msg import String
-from tf2_ros import Buffer, TransformListener
-from grab_demo_msgs.msg import GraspCandidate
-from grab_demo.arm_control_mixin import ArmControlMixin, VELOCITY_LIMIT
-from grab_demo.pose_verification_mixin import PoseVerificationMixin
+from grab_demo.arm_control_mixin import ArmControlMixin, VELOCITY_LIMIT, CURRENT_LIMIT
+from grab_demo.hand_control_mixin import HandControlMixin
 prepare_pose = {
     "head": [
         {1: 0.0, 2: 0.3, 3: 0.0},
     ]
 }
-VELOCITY_LIMIT = 0.4   # 速度限制（弧度/秒）
-CURRENT_LIMIT  = 5.0   # 电流限制（安培）
 
-class GraspPreparePoseNode(ArmControlMixin, Node):
+class GraspPreparePoseNode(ArmControlMixin, HandControlMixin, Node):
     def __init__(self):
         super().__init__('grasp_prepare_pose_node')
 
@@ -46,13 +30,17 @@ class GraspPreparePoseNode(ArmControlMixin, Node):
     # ------------------------------------------------------------------
     # 初始化
     # ------------------------------------------------------------------
-
     def _init_head_control(self):
         """初始化头部控制发布者"""
         self.head_pos_cmd_publisher = self.create_publisher(CmdSetMotorPosition, '/head/cmd_pos', 10)
         self.get_logger().info("✓ 头部电机位置模式控制发布者已创建（话题：/head/cmd_pos）")
         time.sleep(0.5)  # 确保发布者初始化完成
-        self.head_pose_init()
+
+    def hand_pose_init(self):
+        """手指初始化为张开状态"""
+        self.get_logger().info('执行手指张开初始化...')
+        self.hand_open()
+        self.get_logger().info('✓ 手指已张开')
 
     def head_pose_init(self):
         """
@@ -71,7 +59,6 @@ class GraspPreparePoseNode(ArmControlMixin, Node):
             msg = CmdSetMotorPosition()
             msg.header = header
             
-            # 为每个电机创建回零命令
             for motor_id, position in pose.items():
                 # 创建单个电机的位置命令
                 cmd = SetMotorPosition()
@@ -97,6 +84,8 @@ def main():
         node.arm_pose_init()
 
         node.head_pose_init()
+
+        node.hand_pose_init()
 
     except KeyboardInterrupt:
         print('\n用户中断程序')

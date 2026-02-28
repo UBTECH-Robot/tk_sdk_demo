@@ -23,6 +23,7 @@ from bodyctrl_msgs.msg import CmdSetMotorPosition
 from tf2_ros import Buffer, TransformListener
 from grab_demo_msgs.msg import GraspCandidate
 from grab_demo.arm_control_mixin import ArmControlMixin, VELOCITY_LIMIT
+from grab_demo.hand_control_mixin import HandControlMixin
 from grab_demo.pose_verification_mixin import PoseVerificationMixin
 
 
@@ -35,7 +36,7 @@ class GraspState(Enum):
     PLACING    = auto()   # 等待用户选择放置位置 + 放置中
 
 
-class GraspExecutorNode(ArmControlMixin, PoseVerificationMixin, Node):
+class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin, Node):
     """抓取执行节点：IK 解算 + 手臂控制 + 用户确认 + 末端验证"""
 
     def __init__(self):
@@ -149,6 +150,7 @@ class GraspExecutorNode(ArmControlMixin, PoseVerificationMixin, Node):
             with self.state_lock:
                 self.state = GraspState.MOVING
 
+            self.hand_open()  # 确保手指张开
             self.arm_to_pose(joint_positions, spd=VELOCITY_LIMIT / 2)
 
             # ── 阶段 7：验证末端位置 ──────────────────────────────────
