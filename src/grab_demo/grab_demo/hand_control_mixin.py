@@ -83,11 +83,11 @@ class HandControlMixin:
 
         # 输出控制日志
         joint_names = [self.JOINT_NAME_MAP.get(jid, f"未知关节{jid}") for jid in joint_ids]
-        self.get_logger().info(
-            f"[位置控制] 关节：{', '.join(joint_names)} (IDs: {', '.join(joint_ids)})，"
-            f"目标位置：{', '.join(str(pos) for pos in joint_ids.values())}，"
-            f"发布消息：{msg}"
-        )
+        # self.get_logger().info(
+        #     f"[位置控制] 关节：{', '.join(joint_names)} (IDs: {', '.join(joint_ids)})，"
+        #     f"目标位置：{', '.join(str(pos) for pos in joint_ids.values())}，"
+        #     f"发布消息：{msg}"
+        # )
 
         time.sleep(1.5)  # 等待运动完成
 
@@ -127,17 +127,17 @@ class HandControlMixin:
             # 获取并打印服务响应
             if future_left.done():
                 response_left = future_left.result()
-                self.get_logger().info(f"  左手响应 - force_accepted: {response_left.force_accepted}")
+                # self.get_logger().info(f"  左手响应 - force_accepted: {response_left.force_accepted}")
             
             if future_right.done():
                 response_right = future_right.result()
-                self.get_logger().info(f"  右手响应 - force_accepted: {response_right.force_accepted}")
+                # self.get_logger().info(f"  右手响应 - force_accepted: {response_right.force_accepted}")
             
             # 输出控制日志
-            self.get_logger().info(
-                f"[力矩控制] 目标力矩比例：{force_value}，"
-                f"服务调用参数：{request}，"
-            )
+            # self.get_logger().info(
+            #     f"[力矩控制] 目标力矩比例：{force_value}，"
+            #     f"服务调用参数：{request}，"
+            # )
         except Exception as e:
             self.get_logger().error(f"力矩控制服务调用失败: {e}")
 
@@ -175,17 +175,17 @@ class HandControlMixin:
             # 获取并打印服务响应
             if future_left.done():
                 response_left = future_left.result()
-                self.get_logger().info(f"  左手响应 - speed_accepted: {response_left.speed_accepted}")
+                # self.get_logger().info(f"  左手响应 - speed_accepted: {response_left.speed_accepted}")
             
             if future_right.done():
                 response_right = future_right.result()
-                self.get_logger().info(f"  右手响应 - speed_accepted: {response_right.speed_accepted}")
+                # self.get_logger().info(f"  右手响应 - speed_accepted: {response_right.speed_accepted}")
             
             # 输出控制日志
-            self.get_logger().info(
-                f"[速度控制] 目标速度比例：{speed_value}，"
-                f"服务调用参数：{request}，"
-            )
+            # self.get_logger().info(
+            #     f"[速度控制] 目标速度比例：{speed_value}，"
+            #     f"服务调用参数：{request}，"
+            # )
         except Exception as e:
             self.get_logger().error(f"速度控制服务调用失败: {e}")
 

@@ -27,11 +27,11 @@ from grab_demo.hand_control_mixin import HandControlMixin
 from grab_demo.pose_verification_mixin import PoseVerificationMixin
 
 place_locations = {
-    '1': {'id': '1', 'name': '左前方',  'description': '桌子左侧前方', 'pose': {
+    '1': {'id': '1', 'name': '左前方',  'description': '当前抓取手臂的左侧前方', 'pose': {
         'left_arm': {11: -0.1, 12: 0.65, 13: 0.3, 14: -1.28, 15: 0.2, 16: 0.0, 17: 0.0},
         'right_arm': {21: -0.8, 22: -0.28, 23: 0.63, 24: -1.28, 25: -0.2, 26: 0.0, 27: 0.0},
     }},
-    '2': {'id': '2', 'name': '右前方',  'description': '桌子右侧前方', 'pose': {
+    '2': {'id': '2', 'name': '右前方',  'description': '当前抓取手臂的右侧前方', 'pose': {
         'left_arm': {11: -0.80, 12: 0.28, 13: -0.63, 14: -1.28, 15: 0.2, 16: 0.0, 17: 0.0},
         'right_arm': {21: -0.1, 22: -0.65, 23: -0.3, 24: -1.28, 25: -0.2, 26: 0.0, 27: 0.0},
     }},
@@ -42,7 +42,10 @@ safe_pose_after_grasp = {
     "right_arm": {21: 0.0, 22: -0.3, 23: -0.4, 24: -2.3},
 }
 
-PRE_GRASP_Z_OFFSET = 0.10  # 先移动到目标上方 10cm，降低贴桌面曲线运动碰撞风险
+offset_for_place = {
+    "left_arm": {"x": -0.02, "y": 0.1, "z": 0.0},
+    "right_arm": {"x": -0.02, "y": -0.1, "z": 0.0},      
+}
 
 # ============ 状态机 ============
 class GraspState(Enum):
@@ -129,6 +132,10 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
     def _run_grasp_sequence(self, candidate: GraspCandidate):
         """完整抓取-放置流程（后台线程）"""
         try:
+            # if candidate.group_name != 'left_arm':
+            #     self.get_logger().error(f'目前只支持左手抓取机器人左前方对应区域的物体')
+            #     self._wait_for_user_continue()
+            #     return
             # ── 阶段 1：打印候选点信息 ────────────────────────────────
             self._print_candidate_info(candidate)
 
@@ -147,7 +154,8 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
             self.hand_open(candidate.group_name)  # 确保手指张开
 
             # ── 阶段 3：预抓取位姿 IK 解算（抬高 Z）───────────────────
-            pre_grasp_joint_positions = self._solve_ik(candidate, z_offset=PRE_GRASP_Z_OFFSET)
+            offset = offset_for_place[candidate.group_name]
+            pre_grasp_joint_positions = self._solve_ik(candidate, x_offset=offset['x'], y_offset=offset['y'], z_offset=offset['z'])
             if pre_grasp_joint_positions is None:
                 self.get_logger().error('预抓取位姿 IK 解算失败，取消本次抓取')
                 self._wait_for_user_continue()
@@ -159,7 +167,7 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
                 spd=VELOCITY_LIMIT / 2,
                 publish_ghost=True,
                 require_confirm=True,
-                confirm_prompt='是否先移动到目标上方安全位姿？',
+                confirm_prompt='是否先移动到预抓取位姿？',
             ):
                 print('用户已放弃本次抓取。')
                 self._wait_for_user_continue()
@@ -181,7 +189,7 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
                 spd=VELOCITY_LIMIT / 2,
                 publish_ghost=True,
                 require_confirm=True,
-                confirm_prompt='是否从上方下探到目标抓取位姿？',
+                confirm_prompt='是否从预抓取位姿移动到抓取位姿？',
             ):
                 print('用户已放弃本次抓取。')
                 self._wait_for_user_continue()
@@ -257,22 +265,22 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
         finally:
             with self.state_lock:
                 self.state = GraspState.IDLE
-            self.get_logger().info('状态已恢复为 IDLE，等待下一个候选点')
+            self.get_logger().info('状态已恢复为 IDLE')
 
     # ------------------------------------------------------------------
     # IK + 手臂运动（拆分为独立步骤，由 _run_grasp_sequence 编排）
     # ------------------------------------------------------------------
 
-    def _solve_ik(self, candidate: GraspCandidate, z_offset: float = 0.0) -> dict | None:
-        """执行 IK 解算，支持对目标 z 施加偏移（失败返回 None）"""
+    def _solve_ik(self, candidate: GraspCandidate, x_offset: float = 0.0, y_offset: float = 0.0, z_offset: float = 0.0) -> dict | None:
+        """执行 IK 解算，支持对目标位置施加偏移（失败返回 None）"""
         pos        = candidate.pose.pose.position
         orient     = candidate.pose.pose.orientation
         frame_id   = candidate.pose.header.frame_id or 'pelvis'
         group_name = candidate.group_name or 'left_arm'
 
         target_pos = type(pos)()
-        target_pos.x = pos.x
-        target_pos.y = pos.y
+        target_pos.x = pos.x + x_offset
+        target_pos.y = pos.y + y_offset
         target_pos.z = pos.z + z_offset
 
         response = self.call_ik_service_with_params(group_name, frame_id, target_pos, orient)
@@ -328,9 +336,13 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
             print('✗ 无效选择，请输入 1-5')
 
     def _wait_for_user_continue(self):
-        """等待用户按 Enter 继续下一次检测"""
+        """等待用户操作：Enter 继续；输入 q 并回车退出程序。"""
         print('-' * 50)
-        input('按 Enter 键继续检测下一个物体...\n')
+        user_input = input('按 Enter 键继续检测下一个物体；输入 q 并回车退出程序...\n').strip().lower()
+        if user_input == 'q':
+            self.get_logger().info('收到退出指令（q），正在关闭抓取程序...')
+            if rclpy.ok():
+                rclpy.shutdown()
 
 
 def main():
@@ -342,7 +354,8 @@ def main():
         print('\n用户中断程序')
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

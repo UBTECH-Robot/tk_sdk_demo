@@ -37,7 +37,7 @@ POSE_MATCH_ABS_TOL = math.radians(1.0)  # 姿态匹配绝对误差阈值（约 1
 
 prepare_pose = {
     "left_arm": [
-        {11: 0.5, 12: 0.15, 13: 0.3, 14: -0.9,  15: 0.2,  16: 0.0, 17: 0.0},
+        {11: 0.5, 12: 0.15, 13: 0.3, 14: -0.9, 15: 0.2, 16: 0.0, 17: 0.0},
         {11: 0.5, 12: 0.4, 13: 0.6, 14: -2.5, 15: 0.2, 16: 0.0, 17: 0.0},
     ],
     "right_arm": [
@@ -51,17 +51,17 @@ end_pose_sequence = {
         {11: 0.5, 12: 0.4, 13: 0.3, 14: -2.0, 15: 0.2, 16: 0.0, 17: 0.0},
         {11: 1.2, 12: 0.4, 13: 0.2, 14: -2.5, 15: 0.2, 16: 0.0, 17: 0.0},
         {11: 1.2, 12: 0.4, 13: 0.3, 14: -1.7, 15: 0.2, 16: 0.0, 17: 0.0},
-        {11: 0.5, 12: 0.15, 13: 0.2, 14: -0.9, 15: 0.2, 16: 0.0, 17: 0.0},
+        {11: 0.5, 12: 0.15, 13: 0.3, 14: -0.9, 15: 0.2, 16: 0.0, 17: 0.0},
     ],
     "right_arm": [
         {21: 0.5, 22: -0.4, 23: -0.3, 24: -2.0, 25: -0.2, 26: 0.0, 27: 0.0},
         {21: 1.2, 22: -0.4, 23: -0.2, 24: -2.5, 25: -0.2, 26: 0.0, 27: 0.0},
         {21: 1.2, 22: -0.4, 23: -0.3, 24: -1.7, 25: -0.2, 26: 0.0, 27: 0.0},
-        {21: 0.5, 22: -0.15, 23: -0.2, 24: -0.9, 25: -0.2, 26: 0.0, 27: 0.0},
+        {21: 0.5, 22: -0.15, 23: -0.3, 24: -0.9, 25: -0.2, 26: 0.0, 27: 0.0},
     ],
 }
 
-# MoveIt 错误码 → 说明映射（来自 moveit_msgs/MoveItErrorCodes）
+# MoveIt 响应码 → 说明映射（来自 moveit_msgs/MoveItErrorCodes）
 MOVEIT_ERROR_CODES = {
      1: 'SUCCESS（成功）',
     -1: 'FAILURE（通用失败）',
@@ -171,48 +171,6 @@ class ArmControlMixin:
             return _RIGHT_ARM_JOINT_MOTOR_MAP
         return _LEFT_ARM_JOINT_MOTOR_MAP
 
-    # def create_joint_state_from_motor_dict(self, motor_positions_dict: dict,
-    #                                        group_name: str = 'left_arm') -> JointState:
-    #     """将电机位置字典转换为 JointState 消息
-    #
-    #     会将字典中的目标关节加入到消息中，其余关节使用当前实际关节状态填充，
-    #     以避免 IK 求解器因缺少关节信息而失败。
-    #
-    #     参数:
-    #         motor_positions_dict: {电机ID(int或str): 角度(float)}
-    #         group_name: 规划组名称，用于确定关节映射表
-    #     """
-    #     # 构建 motor_id(int) → joint_name 的映射
-    #     motor_to_joint = {
-    #         int(k): v
-    #         for k, v in {
-    #             v: k for k, v in self._get_joint_motor_map(group_name).items()
-    #         }.items()
-    #     }
-    #
-    #     joint_state = JointState()
-    #     joint_state.header.stamp = self.get_clock().now().to_msg()
-    #
-    #     # 先填充目标组的关节
-    #     for motor_id_int in sorted(motor_to_joint.keys()):
-    #         joint_name = motor_to_joint[motor_id_int]
-    #         motor_id_str = str(motor_id_int)
-    #         if motor_id_int in motor_positions_dict:
-    #             joint_state.name.append(joint_name)
-    #             joint_state.position.append(motor_positions_dict[motor_id_int])
-    #         elif motor_id_str in motor_positions_dict:
-    #             joint_state.name.append(joint_name)
-    #             joint_state.position.append(motor_positions_dict[motor_id_str])
-    #
-    #     # 其余关节使用当前实际状态补全
-    #     if self.current_joint_state is not None:
-    #         for i, name in enumerate(self.current_joint_state.name):
-    #             if name not in joint_state.name:
-    #                 joint_state.name.append(name)
-    #                 joint_state.position.append(self.current_joint_state.position[i])
-    #
-    #     return joint_state
-
     def _get_seed_joint_state(self, group_name: str) -> JointState:
         """获取 IK 种子关节状态（加锁读取当前实际状态）
 
@@ -311,8 +269,8 @@ class ArmControlMixin:
         result_dict = {}
 
         ik_code = response.error_code.val
-        ik_desc = MOVEIT_ERROR_CODES.get(ik_code, f'未知错误码 {ik_code}')
-        self.get_logger().info(f'IK 错误码: {ik_code}  →  {ik_desc}')
+        ik_desc = MOVEIT_ERROR_CODES.get(ik_code, f'未知响应码 {ik_code}')
+        self.get_logger().info(f'IK 响应码: {ik_code}  →  {ik_desc}')
 
         if response.error_code.val == 1:  # SUCCESS
             joint_names     = response.solution.joint_state.name
@@ -323,16 +281,16 @@ class ArmControlMixin:
                 if joint_name in joint_motor_map:
                     motor_id = joint_motor_map[joint_name]
                     result_dict[motor_id] = round(joint_positions[i], 5)
-                    self.get_logger().info(
-                        f'  [{i}] {joint_name} → 电机{motor_id}: {joint_positions[i]:.5f}'
-                    )
+                    # self.get_logger().info(
+                    #     f'  [{i}] {joint_name} → 电机{motor_id}: {joint_positions[i]:.5f}'
+                    # )
 
             expected = len(joint_motor_map)
             if len(result_dict) != expected:
                 self.get_logger().error(
                     f'⚠ 只找到 {len(result_dict)} 个关节，应为 {expected} 个！'
                 )
-
+            self.get_logger().info(json.dumps(result_dict))
             return dict(sorted(result_dict.items(), key=lambda x: int(x[0])))
 
         return None
@@ -347,12 +305,12 @@ class ArmControlMixin:
             True: target_pose 中所有关节都与 current_joint_state 对应关节一致
             False: 任一关节不一致 / 关节缺失 / current_joint_state 未就绪
         """
+        while not self.current_joint_state:
+            time.sleep(0.5)
+            self.get_logger().info('等待 current_joint_state 就绪')
+
         with self._joint_state_lock:
             current = copy.copy(self.current_joint_state)
-
-        if current is None:
-            self.get_logger().warn('current_joint_state 尚未就绪，无法比较姿态')
-            return False
 
         # 电机ID(str) -> 关节名
         motor_to_joint_map = {

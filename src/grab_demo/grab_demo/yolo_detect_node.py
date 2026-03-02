@@ -49,6 +49,10 @@ prepare_pose = {
     ]
 }
 
+left_arm_grasp_q = [-0.187, 0.647, -0.562, 0.481]
+left_arm_grasp_offset = [-0.10, 0.13, -0.05]  # 左手从识别到的物体点加上这个偏移量后才是左手末端真正要到的坐标（单位：米）
+right_arm_grasp_offset = [-0.10, -0.13, -0.04]  # 右手从识别到的物体点加上这个偏移量后才是右手末端真正要到的坐标（单位：米）
+
 class YoloDetectNode(Node):
     def __init__(self):
         super().__init__("yolo_detect_node")
@@ -267,6 +271,7 @@ class YoloDetectNode(Node):
         
         # 抓取点发布者
         self.grasp_pose_pub = self.create_publisher(PoseStamped, "/grasp_pose", 10)
+        self.object_pose_pub = self.create_publisher(PoseStamped, "/object_pose", 10)
         
         # 创建 /gui/joint_command 发布者（用于向GUI发送关节命令）
         # 消息格式：JSON字符串，如 {"11": 0.5, "12": 0.15, ...}
@@ -337,39 +342,7 @@ class YoloDetectNode(Node):
             GraspCandidate, '/grasp_candidate', 10
         )
         self.get_logger().info("✓ 抓取候选点发布者已创建（/grasp_candidate）")
-
-
-    # def publish_static_transform(self):
-    #     """
-    #     发布静态TF变换：camera_head_link -> ob_camera_head_link
-    #     对应命令：ros2 run tf2_ros static_transform_publisher 0.0 0.0 0.0 0 0 0 1 camera_head_link ob_camera_head_link
-    #     """
-    #     static_broadcaster = StaticTransformBroadcaster(self)
-        
-    #     # 创建变换消息
-    #     static_transform = TransformStamped()
-    #     static_transform.header.stamp = self.get_clock().now().to_msg()
-    #     static_transform.header.frame_id = "camera_head_link"
-    #     static_transform.child_frame_id = "ob_camera_head_link"
-        
-    #     # 设置位移（平移）：(0.0, 0.0, 0.0)
-    #     static_transform.transform.translation.x = 0.0
-    #     static_transform.transform.translation.y = 0.0
-    #     static_transform.transform.translation.z = 0.0
-        
-    #     # 设置旋转（四元数）：(0, 0, 0, 1)，表示无旋转
-    #     static_transform.transform.rotation.x = 0.0
-    #     static_transform.transform.rotation.y = 0.0
-    #     static_transform.transform.rotation.z = 0.0
-    #     static_transform.transform.rotation.w = 1.0
-        
-    #     # 发送静态变换
-    #     static_broadcaster.sendTransform(static_transform)
-        
-    #     self.get_logger().info(
-    #         f"✓ 静态TF变换已发布: camera_head_link -> ob_camera_head_link"
-    #     )
-    
+   
     def _parse_target_classes_from_args(self):
         """
         从命令行参数解析目标类别
@@ -383,7 +356,7 @@ class YoloDetectNode(Node):
         Returns:
             list: 目标类别列表，如 ['apple', 'orange']，或默认值 ['apple']
         """
-        target_classes = ['apple']  # 默认值：检测苹果
+        target_classes = ['bottle']  # 默认值：检测瓶子
         
         # 检查命令行中是否有 --target_classes 参数
         if '--target_classes' in sys.argv:
@@ -416,19 +389,16 @@ class YoloDetectNode(Node):
         """
         从命令行参数解析目标坐标系
         
-        用于指定抓取操作的基准坐标系。对于人形机器人，通常是：
-        - L_base_link: 左腿基座（左臂抓取）
-        - R_base_link: 右腿基座（右臂抓取）
-        - waist_yaw_link: 腰部中心（躯干参考）
+        用于指定抓取操作的基准坐标系。对于天工是 pelvis
         
         使用方法：
-            ros2 run grab_demo yolo_detect_node --target_frame L_base_link
-            ros2 run grab_demo yolo_detect_node --target_frame R_base_link
+            ros2 run grab_demo yolo_detect_node
+            ros2 run grab_demo yolo_detect_node
         
         Returns:
-            str: 目标基座坐标系名称，默认为 "L_base_link"
+            str: 目标基座坐标系名称，默认为 "pelvis"
         """
-        target_frame = "pelvis" # "L_base_link"  # 默认值：
+        target_frame = "pelvis"
         
         if '--target_frame' in sys.argv:
             try:
@@ -442,7 +412,7 @@ class YoloDetectNode(Node):
                 print(f"[ERROR] 解析目标坐标系参数失败: {e}，使用默认值: {target_frame}")
         else:
             print(f"[INFO] 未指定 --target_frame 参数，使用默认值: {target_frame}")
-            # print(f"[INFO] 使用方法: ros2 run grab_demo yolo_detect_node --target_frame L_base_link")
+            # print(f"[INFO] 使用方法: ros2 run grab_demo yolo_detect_node")
         
         return target_frame
 
@@ -510,18 +480,18 @@ class YoloDetectNode(Node):
         
         self.camera_info_received = True
         
-        self.get_logger().info("=" * 60)
-        self.get_logger().info("深度相机校准信息 (Depth Camera Info):")
-        self.get_logger().info("=" * 60)
+        # self.get_logger().info("=" * 60)
+        # self.get_logger().info("深度相机校准信息 (Depth Camera Info):")
+        # self.get_logger().info("=" * 60)
         
-        # 打印基本信息
-        self.get_logger().info(f"相机名称 (Camera Name): {msg.header.frame_id}")
-        self.get_logger().info(f"图像分辨率 (Image Size): {msg.width} x {msg.height}")
+        # # 打印基本信息
+        # self.get_logger().info(f"相机名称 (Camera Name): {msg.header.frame_id}")
+        # self.get_logger().info(f"图像分辨率 (Image Size): {msg.width} x {msg.height}")
         
-        # 打印内参矩阵（K矩阵）
-        self.get_logger().info("相机内参矩阵 (Camera Matrix K):")
-        K = np.array(msg.k).reshape(3, 3)
-        self.get_logger().info(f"\n{K}")
+        # # 打印内参矩阵（K矩阵）
+        # self.get_logger().info("相机内参矩阵 (Camera Matrix K):")
+        # K = np.array(msg.k).reshape(3, 3)
+        # self.get_logger().info(f"\n{K}")
         
         # 打印畸变系数
         # self.get_logger().info(f"畸变系数 (Distortion Coefficients): {msg.d}")
@@ -605,7 +575,7 @@ class YoloDetectNode(Node):
             target_class_names = ', '.join([self.class_names[cid] for cid in self.target_class_ids])
             other_objects_str = ', '.join([f"{name}({count})" for name, count in other_objects.items()])
             
-            # self.get_logger().info(f"未检测到目标物体: {target_class_names} | 检测到其他物体: {other_objects_str}")
+            self.get_logger().info(f"未检测到目标物体: {target_class_names} | 检测到其他物体: {other_objects_str}")
             # self.get_logger().info("-" * 50)
             
             # 返回False，表示过滤失败，调用方应忽略本帧
@@ -980,7 +950,6 @@ class YoloDetectNode(Node):
             
             target_frame (str): 目标坐标系名称
                 如果为None，则使用初始化时指定的 self.target_frame
-                常见值: "L_base_link", "R_base_link", "waist_yaw_link"
         
         Returns:
             dict: 目标坐标系下的3D点，包含：
@@ -1116,6 +1085,90 @@ class YoloDetectNode(Node):
                 'camera_frame': self.ob_camera_frame,
                 'X': None, 'Y': None, 'Z': None
             }
+
+    def get_axis_symmetric_quaternion(self, quaternion, axis: str = 'y'):
+        """计算给定位姿四元数关于指定轴对称后的四元数。
+
+        参数:
+            quaternion: 输入四元数，支持以下形式：
+                - [x, y, z, w] / (x, y, z, w)
+                - {'x':..., 'y':..., 'z':..., 'w':...}
+                - 具有 x/y/z/w 属性的对象
+            axis: 对称轴，可选 'x'/'y'/'z'，默认 'y'
+
+        返回:
+            list[float]: 对称后的四元数 [x, y, z, w]
+        """
+        def _parse_quaternion(q):
+            if isinstance(q, (list, tuple)) and len(q) == 4:
+                qx, qy, qz, qw = map(float, q)
+                return qx, qy, qz, qw
+            if isinstance(q, dict) and all(k in q for k in ('x', 'y', 'z', 'w')):
+                return float(q['x']), float(q['y']), float(q['z']), float(q['w'])
+            if all(hasattr(q, k) for k in ('x', 'y', 'z', 'w')):
+                return float(q.x), float(q.y), float(q.z), float(q.w)
+            raise ValueError('quaternion 格式无效，应为 [x,y,z,w] / dict / 含 x,y,z,w 属性对象')
+
+        def _quat_to_rot(qx, qy, qz, qw):
+            norm = np.linalg.norm([qx, qy, qz, qw])
+            if norm == 0:
+                raise ValueError('四元数范数为0，无法计算')
+            qx, qy, qz, qw = qx / norm, qy / norm, qz / norm, qw / norm
+
+            return np.array([
+                [1 - 2 * (qy * qy + qz * qz),     2 * (qx * qy - qz * qw),     2 * (qx * qz + qy * qw)],
+                [    2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz),     2 * (qy * qz - qx * qw)],
+                [    2 * (qx * qz - qy * qw),     2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)],
+            ], dtype=np.float64)
+
+        def _rot_to_quat(rot):
+            trace = float(np.trace(rot))
+            if trace > 0.0:
+                s = np.sqrt(trace + 1.0) * 2.0
+                qw = 0.25 * s
+                qx = (rot[2, 1] - rot[1, 2]) / s
+                qy = (rot[0, 2] - rot[2, 0]) / s
+                qz = (rot[1, 0] - rot[0, 1]) / s
+            else:
+                if rot[0, 0] > rot[1, 1] and rot[0, 0] > rot[2, 2]:
+                    s = np.sqrt(1.0 + rot[0, 0] - rot[1, 1] - rot[2, 2]) * 2.0
+                    qw = (rot[2, 1] - rot[1, 2]) / s
+                    qx = 0.25 * s
+                    qy = (rot[0, 1] + rot[1, 0]) / s
+                    qz = (rot[0, 2] + rot[2, 0]) / s
+                elif rot[1, 1] > rot[2, 2]:
+                    s = np.sqrt(1.0 + rot[1, 1] - rot[0, 0] - rot[2, 2]) * 2.0
+                    qw = (rot[0, 2] - rot[2, 0]) / s
+                    qx = (rot[0, 1] + rot[1, 0]) / s
+                    qy = 0.25 * s
+                    qz = (rot[1, 2] + rot[2, 1]) / s
+                else:
+                    s = np.sqrt(1.0 + rot[2, 2] - rot[0, 0] - rot[1, 1]) * 2.0
+                    qw = (rot[1, 0] - rot[0, 1]) / s
+                    qx = (rot[0, 2] + rot[2, 0]) / s
+                    qy = (rot[1, 2] + rot[2, 1]) / s
+                    qz = 0.25 * s
+
+            q = np.array([qx, qy, qz, qw], dtype=np.float64)
+            q /= np.linalg.norm(q)
+            return q.tolist()
+
+        axis = axis.lower()
+        symmetry_matrix_map = {
+            'x': np.diag([1.0, -1.0, 1.0]),
+            'y': np.diag([-1.0, 1.0, 1.0]),
+            'z': np.diag([1.0, 1.0, -1.0]),
+        }
+        if axis not in symmetry_matrix_map:
+            raise ValueError("axis 仅支持 'x'/'y'/'z'")
+
+        qx, qy, qz, qw = _parse_quaternion(quaternion)
+        rot = _quat_to_rot(qx, qy, qz, qw)
+        symmetry = symmetry_matrix_map[axis]
+
+        # 对称后的旋转矩阵：R' = S * R * S
+        rot_sym = symmetry @ rot @ symmetry
+        return _rot_to_quat(rot_sym)
     
     def publish_grasp_pose(self, coords_3d, pixel_coords, num_detections):
         """发布抓取点的位姿信息
@@ -1140,48 +1193,61 @@ class YoloDetectNode(Node):
         coords_base = self.transform_point_to_target_frame(coords_3d)
         
         # 创建PoseStamped消息
-        pose_stamped = PoseStamped()
-        pose_stamped.header.stamp = self.get_clock().now().to_msg()
+        object_pose = PoseStamped()
+        object_pose.header.stamp = self.get_clock().now().to_msg()
         # pose_stamped.pose.orientation.w = 1.0  # 无旋转
                 
-        # 四元数（从tf2_echo读取）- 必须归一化
-        # q = [-0.041, 0.712, -0.690, 0.121]
-        q = [-0.179, 0.708, -0.388, 0.562]
-        q_norm = np.linalg.norm(q)
-        q = [x / q_norm for x in q]  # 归一化
-        pose_stamped.pose.orientation.x = q[0]
-        pose_stamped.pose.orientation.y = q[1]
-        pose_stamped.pose.orientation.z = q[2]
-        pose_stamped.pose.orientation.w = q[3]
         
         if coords_base['success']:
             # 变换成功：使用基座坐标系
-            pose_stamped.header.frame_id = coords_base['frame_id']
-            pose_stamped.pose.position.x = coords_base['X'] - 0.13
-            pose_stamped.pose.position.y = coords_base['Y'] + 0.08
-            pose_stamped.pose.position.z = coords_base['Z'] - 0.005
-            
-            # self.get_logger().info(
-            #     f"✓ 抓取点在 ({coords_base['frame_id']}) 坐标系内的坐标，将进行IK解算: \n"
-            #     f"x: {coords_base['X']}, y: {coords_base['Y']}, z: {coords_base['Z']}\n"
-            #     f"X={coords_base['X']:.3f}m, Y={coords_base['Y']:.3f}m, Z={coords_base['Z']:.3f}m\n"
-            # )       
-        
+            object_pose.header.frame_id = coords_base['frame_id']
+            # pose_stamped.pose.position.x = coords_base['X'] - 0.13 # 从上方抓取的左手需要的偏移
+            # pose_stamped.pose.position.y = coords_base['Y'] + 0.08
+            # pose_stamped.pose.position.z = coords_base['Z'] - 0.005
+            object_pose.pose.position.x = coords_base['X'] # - 0.10 # 偏移在后面再加
+            object_pose.pose.position.y = coords_base['Y'] # + 0.13
+            object_pose.pose.position.z = coords_base['Z'] # - 0.05        
         else:
             # 变换失败：降级到相机坐标系
-            pose_stamped.header.frame_id = self.ob_camera_frame
-            pose_stamped.pose.position.x = X_cam
-            pose_stamped.pose.position.y = Y_cam
-            pose_stamped.pose.position.z = Z_cam
+            object_pose.header.frame_id = self.ob_camera_frame
+            object_pose.pose.position.x = X_cam
+            object_pose.pose.position.y = Y_cam
+            object_pose.pose.position.z = Z_cam
             
             self.get_logger().warn(
                 f"⚠ 无法变换到 {self.target_frame}: {coords_base['error']}"
             )
         
-        self.grasp_pose_pub.publish(pose_stamped)
-        return pose_stamped
+        
+        # 四元数（从tf2_echo读取）- 必须归一化
+        # q = [-0.041, 0.712, -0.690, 0.121]
+        # q = [-0.179, 0.708, -0.388, 0.562] # 从上方抓取的左手末端位姿
+
+        # 从tf2_echo读取的四元数，针对从侧面抓取的末端位姿，如果物体在y>0则直接使用左手抓取时的末端位姿，否则进行y轴对称变换也就是右手抓取的末端位姿
+        q = left_arm_grasp_q if object_pose.pose.position.y > 0 else self.get_axis_symmetric_quaternion(left_arm_grasp_q, 'x') # 从侧面抓取的左手末端位姿
+        offset = left_arm_grasp_offset if object_pose.pose.position.y > 0 else right_arm_grasp_offset # 从侧面抓取的左手末端位姿的偏移
+        q_norm = np.linalg.norm(q)
+        q = [x / q_norm for x in q]  # 归一化
+        object_pose.pose.orientation.x = q[0]
+        object_pose.pose.orientation.y = q[1]
+        object_pose.pose.orientation.z = q[2]
+        object_pose.pose.orientation.w = q[3]
+
+        # 发布原始物体位姿（无偏移）
+        self.object_pose_pub.publish(object_pose)
+
+        # 构造抓取位姿：与 object_pose 姿态完全一致，仅 position 添加偏移
+        hand_base_pose = PoseStamped()
+        hand_base_pose.header = object_pose.header
+        hand_base_pose.pose.orientation = object_pose.pose.orientation
+        hand_base_pose.pose.position.x = object_pose.pose.position.x + offset[0]  # 从侧面抓取的对应的手需要的偏移
+        hand_base_pose.pose.position.y = object_pose.pose.position.y + offset[1]
+        hand_base_pose.pose.position.z = object_pose.pose.position.z + offset[2]
+
+        self.grasp_pose_pub.publish(hand_base_pose)
+        return hand_base_pose
         # self.get_logger().info(
-        #     f"✓ 已发布抓取点在 {pose_stamped.header.frame_id} 坐标系下的坐标 | "
+        #     f"✓ 已发布抓取点在 {object_pose.header.frame_id} 坐标系下的坐标 | "
         #     f"检测到 {num_detections} 个物体"
         # )
         # self.get_logger().info("-" * 50)
@@ -1470,7 +1536,8 @@ def main():
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        print("\n用户中断程序")
+        if rclpy.ok():
+            print("\n用户中断程序")
     finally:
         node.destroy_node()
         rclpy.shutdown()

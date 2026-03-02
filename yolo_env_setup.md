@@ -137,7 +137,11 @@ python /home/nvidia/sdk_demo/src/grab_demo/grab_demo/yolo_detect_node.py
 python /home/nvidia/sdk_demo/src/grab_demo/grab_demo/grasp_executor_node.py
 
 python /home/nvidia/sdk_demo/src/grab_demo/grab_demo/ik_client_node.py
-python /home/nvidia/sdk_demo/src/grab_demo/grab_demo/grasp_prepare_pose_node.py
+
+双臂收回到结束姿态：
+python /home/nvidia/sdk_demo/src/grab_demo/grab_demo/pose_node.py e
+双臂进入准备状态：
+python /home/nvidia/sdk_demo/src/grab_demo/grab_demo/pose_node.py p
 
 <!-- ros2 run grab_demo yolo_grab_node --target_classes apple -->
 
@@ -147,8 +151,9 @@ ros2 run topic_tools relay /camera/depth/image_raw /ob_camera_head/depth/image_r
 ros2 run topic_tools relay /camera/depth/camera_info /ob_camera_head/depth/camera_info &
 
 查询末端位姿：
-ros2 run tf2_ros tf2_echo pelvis left_tcp_link
-<!-- ros2 run tf2_ros tf2_echo pelvis L_base_link -->
+<!-- ros2 run tf2_ros tf2_echo pelvis left_tcp_link -->
+当前使用的末端是 L_base_link 
+ros2 run tf2_ros tf2_echo pelvis L_base_link
 其中的输出：
 Rotation: in Quaternion [0.129, -0.147, -0.012, 0.981]
 Rotation: in Quaternion [0.171, -0.246, -0.114, 0.947]

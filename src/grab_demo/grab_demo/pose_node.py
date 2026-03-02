@@ -11,9 +11,11 @@ python /home/nvidia/sdk_demo/src/grab_demo/grab_demo/pose_node.py e
 python /home/nvidia/sdk_demo/src/grab_demo/grab_demo/pose_node.py p
 """
 import argparse
+import threading
 import time
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import SingleThreadedExecutor
 from bodyctrl_msgs.msg import CmdSetMotorPosition, SetMotorPosition
 from grab_demo.arm_control_mixin import ArmControlMixin, VELOCITY_LIMIT, CURRENT_LIMIT
 from grab_demo.hand_control_mixin import HandControlMixin
@@ -95,6 +97,11 @@ def main():
 
     rclpy.init()
     node = PoseNode()
+    executor = SingleThreadedExecutor()
+    executor.add_node(node)
+    spin_thread = threading.Thread(target=executor.spin, daemon=True)
+    spin_thread.start()
+
     try:
         if args.action == "p": # prepare
 
@@ -109,8 +116,12 @@ def main():
     except KeyboardInterrupt:
         print('\n用户中断程序')
     finally:
+        executor.shutdown()
+        if spin_thread.is_alive():
+            spin_thread.join(timeout=1.0)
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':
