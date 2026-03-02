@@ -337,7 +337,7 @@ class ArmControlMixin:
 
         return None
 
-    def is_pose_match_current_pose(self, target_pose: dict) -> bool:
+    def is_pose_match_current_pose(self, target_pose: dict, log_mismatch: bool = True) -> bool:
         """判断目标电机姿态是否与当前关节状态一致。
 
         参数:
@@ -379,10 +379,11 @@ class ArmControlMixin:
 
             current_value = current_joint_pos[joint_name]
             if not math.isclose(float(target_value), float(current_value), abs_tol=POSE_MATCH_ABS_TOL):
-                self.get_logger().info(
-                    f'关节 {joint_name}（电机{motor_id_str}）姿态不匹配：'
-                    f'目标 {target_value:.5f} rad vs 当前 {current_value:.5f} rad'
-                )
+                if log_mismatch:
+                    self.get_logger().info(
+                        f'关节 {joint_name}（电机{motor_id_str}）姿态不匹配：'
+                        f'目标 {target_value:.5f} rad vs 当前 {current_value:.5f} rad'
+                    )
                 return False
 
         return True
@@ -441,8 +442,18 @@ class ArmControlMixin:
         self.arm_pos_cmd_publisher.publish(msg)
         self.get_logger().info('✓ 手臂运动命令已发送')
 
-        # 等待手臂运动完成（IK 最多 5s + 运动 6s，取 7s 作为安全余量）
-        time.sleep(7.0)
+        # 最多等待 7s；若提前到位则提前返回
+        deadline = time.time() + 7.0
+        while True:
+            if self.is_pose_match_current_pose(pose, log_mismatch=False):
+                self.get_logger().info('✓ 手臂已到达目标位姿')
+                return True
+
+            if time.time() >= deadline:
+                self.get_logger().warn('等待手臂到达目标位姿超时（7s），继续后续流程')
+                return True
+
+            time.sleep(0.5)
         return True
 
     def _publish_model_ghost(self, joint_positions: dict):

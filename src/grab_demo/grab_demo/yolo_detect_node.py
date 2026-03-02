@@ -63,6 +63,8 @@ class YoloDetectNode(Node):
         self._init_tf_transforms()           # TF2 坐标系变换配置
         self._init_grasp_candidate_pub()     # 抢取候选点发布者
 
+        self.get_logger().info("✓ YoloDetectNode 初始化完成，正在等待图像数据...")
+
     def _init_head_pose(self):
         self.head_pos_cmd_publisher = self.create_publisher(CmdSetMotorPosition, '/head/cmd_pos', 10)
         self.get_logger().info("✓ 头部电机位置模式控制发布者已创建（话题：/head/cmd_pos）")
@@ -533,14 +535,14 @@ class YoloDetectNode(Node):
         self.cx = self.camera_matrix_K[0, 2]  # 主点 x
         self.cy = self.camera_matrix_K[1, 2]  # 主点 y
         
-        self.get_logger().info("\n" + "="*60)
-        self.get_logger().info("相机内参矩阵参数已保存：")
-        self.get_logger().info(f"  焦距 fx: {self.fx:.2f}")
-        self.get_logger().info(f"  焦距 fy: {self.fy:.2f}")
-        self.get_logger().info(f"  主点 cx: {self.cx:.2f}")
-        self.get_logger().info(f"  主点 cy: {self.cy:.2f}")
-        self.get_logger().info("这些参数用于像素坐标到3D相机坐标系的反投影转换")
-        self.get_logger().info("="*60 + "\n")
+        # self.get_logger().info("\n" + "="*60)
+        # self.get_logger().info("相机内参矩阵参数已保存：")
+        # self.get_logger().info(f"  焦距 fx: {self.fx:.2f}")
+        # self.get_logger().info(f"  焦距 fy: {self.fy:.2f}")
+        # self.get_logger().info(f"  主点 cx: {self.cx:.2f}")
+        # self.get_logger().info(f"  主点 cy: {self.cy:.2f}")
+        # self.get_logger().info("这些参数用于像素坐标到3D相机坐标系的反投影转换")
+        # self.get_logger().info("="*60 + "\n")
         
         # 检查是否有特殊标记表示深度单位
         # Orbbec SDK 某些版本在 camera_info 的其他字段中标记深度单位
@@ -577,16 +579,6 @@ class YoloDetectNode(Node):
         Side Effects:
             - 直接修改 results[0].boxes，只保留目标类别的检测框
             - 记录日志信息
-        
-        Examples:
-            >>> results = self.model.predict(source=color_img, device=self.device, conf=0.4)
-            >>> if self.filter_detections_by_target_classes(results):
-            ...     # 继续处理 results[0].boxes（已过滤）
-            ...     for box in results[0].boxes:
-            ...         process(box)
-            ... else:
-            ...     # 本帧未检测到目标物体，忽略
-            ...     return
         """
         # 如果未指定目标类别，则不进行过滤，接受所有检测框
         if not self.target_class_ids:
@@ -1167,7 +1159,7 @@ class YoloDetectNode(Node):
             pose_stamped.header.frame_id = coords_base['frame_id']
             pose_stamped.pose.position.x = coords_base['X'] - 0.13
             pose_stamped.pose.position.y = coords_base['Y'] + 0.08
-            pose_stamped.pose.position.z = coords_base['Z'] #- 0.01
+            pose_stamped.pose.position.z = coords_base['Z'] - 0.005
             
             # self.get_logger().info(
             #     f"✓ 抓取点在 ({coords_base['frame_id']}) 坐标系内的坐标，将进行IK解算: \n"
