@@ -1,3 +1,4 @@
+# 已弃用
 import time
 import rclpy
 from rclpy.node import Node
@@ -53,6 +54,7 @@ prepare_pose = {
     ]
 }
 
+# 已弃用
 class YoloGrabNode(PoseVerificationMixin, Node):
     def __init__(self):
         super().__init__("yolo_grab_node")
