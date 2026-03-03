@@ -266,7 +266,7 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
 
             self.hand_open(candidate.group_name)  # 放开物体
 
-            yes = self.arm_to_angle(safe_pose, spd=VELOCITY_LIMIT / 2)  # 运动到安全姿态
+            yes = self.arm_to_angle(safe_pose, spd=VELOCITY_LIMIT / 2, publish_ghost=False, require_confirm=False)  # 运动到安全姿态
             if not yes:
                 self.get_logger().error('已取消运动到安全位姿，本次抓取流程结束。')
 
