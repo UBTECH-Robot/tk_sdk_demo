@@ -232,6 +232,16 @@ python /home/nvidia/tk_sdk_demo/src/grab_demo/grab_demo/pose_node.py e
 
 ![alt text](image-3.png)
 
+也可以用如下命令验证灵巧手是否可正常控制：
+
+```bash
+# 张开手指（放置动作）
+python /home/nvidia/sdk_demo/src/grab_demo/grab_demo/hand_control_mixin.py open
+
+# 闭合手指（抓取动作）
+python /home/nvidia/sdk_demo/src/grab_demo/grab_demo/hand_control_mixin.py close
+```
+
 7. 打开新终端，启动抓取服务
 ```bash
 python /home/nvidia/tk_sdk_demo/src/grab_demo/grab_demo/grasp_executor_node.py

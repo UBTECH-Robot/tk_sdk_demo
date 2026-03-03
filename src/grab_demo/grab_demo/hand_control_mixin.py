@@ -16,7 +16,7 @@ JOINT_NAME_MAP = {
     "6": "拇指旋转",
 }
 open_pose = 1.0
-close_pose = 0.6
+close_pose = 0.55
 class HandControlMixin:
     def __init__(self, *args, **kwargs):
         # 通过 super() 沿 MRO 链传递参数，确保 Node.__init__ 被正确调用
@@ -33,7 +33,7 @@ class HandControlMixin:
     def _init_hand_control(self):
         """初始化手部控制发布者和关节状态订阅"""
         # 保存控制参数
-        self.tor_value = 0.3
+        self.tor_value = 0.4
         self.spd_value = 0.3
 
         # 位置话题发布器初始化
@@ -227,10 +227,10 @@ def main():
     try:
         if args.action == "open":
             node.get_logger().info("执行手部张开动作")
-            node.hand_open()
+            node.hand_open("left_right")  # 同时张开左右手
         else:
             node.get_logger().info("执行手部闭合动作")
-            node.hand_close()
+            node.hand_close("left_right")  # 同时闭合左右手
         time.sleep(0.2)
     finally:
         node.destroy_node()

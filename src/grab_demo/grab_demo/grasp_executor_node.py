@@ -145,6 +145,7 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
 
             pose_ready = False
             if self.is_angle_match_current_angle(self.prepare_pose['left_arm'][1]) and self.is_angle_match_current_angle(self.prepare_pose['right_arm'][1]):
+                pose_ready = True
                 self.get_logger().info('✓ 手臂已在准备姿态，无需移动')
             else:
                 ee_link = 'R_base_link' if 'right' in candidate.group_name else 'L_base_link'
@@ -237,8 +238,8 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
 
             safe_pose = self.prepare_pose[candidate.group_name][1]
 
-            # yes = self.arm_to_angle(safe_pose_after_grasp[candidate.group_name], spd=VELOCITY_LIMIT / 2, publish_ghost=False, require_confirm=False)
-            yes = self.arm_to_angle(safe_pose_after_grasp[candidate.group_name], spd=VELOCITY_LIMIT / 2)
+            yes = self.arm_to_angle(safe_pose_after_grasp[candidate.group_name], spd=VELOCITY_LIMIT / 2, publish_ghost=False, require_confirm=False)
+            # yes = self.arm_to_angle(safe_pose_after_grasp[candidate.group_name], spd=VELOCITY_LIMIT / 2)
 
             # yes = self.arm_to_angle(safe_pose, spd=VELOCITY_LIMIT / 2)  # 运动到安全姿态
             if not yes:
