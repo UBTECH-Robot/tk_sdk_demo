@@ -113,15 +113,18 @@ Acquire::https::Proxy "http://10.10.33.101:7890/";
 
 <!-- 
 或者修改 /etc/apt/sources.list 为如下：
-deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy main restricted universe multiverse
-deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates main restricted universe multiverse
-deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security main restricted universe multiverse
+# 清华大学镜像源 - Ubuntu 22.04 (Jammy) for ARM
+deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ jammy main restricted universe multiverse
+deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ jammy-updates main restricted universe multiverse
+deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ jammy-backports main restricted universe multiverse
+deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ jammy-security main restricted universe multiverse
+
  -->
 
 . ~/tiangong2pro_tf/install/setup.bash && . ~/sdk_demo/install/setup.bash
 
 启动tf树：
-ros2 launch tiangong2pro_urdf display_with_hands.launch.py
+ros2 launch tiangong2pro_urdf grasp_pose.launch.py
 
 启动 moveit2 配置向导：
 ros2 run moveit_setup_assistant moveit_setup_assistant

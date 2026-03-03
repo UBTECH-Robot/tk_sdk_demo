@@ -67,7 +67,7 @@ class YoloDetectNode(Node):
         self._init_tf_transforms()           # TF2 坐标系变换配置
         self._init_grasp_candidate_pub()     # 抢取候选点发布者
 
-        self.get_logger().info("✓ YoloDetectNode 初始化完成，正在等待图像数据...")
+        self.get_logger().info(f"✓ YoloDetectNode 初始化完成，正在等待包含[{self.target_classes}]的图像数据...")
 
     def _init_head_pose(self):
         self.head_pos_cmd_publisher = self.create_publisher(CmdSetMotorPosition, '/head/cmd_pos', 10)
@@ -125,7 +125,7 @@ class YoloDetectNode(Node):
                 # 添加到消息数组
                 msg.cmds.append(cmd)
                 
-                self.get_logger().info(f"  电机 {motor_id}：运动到位置（{position} rad）")
+                # self.get_logger().info(f"  电机 {motor_id}：运动到位置（{position} rad）")
             
             # 发送命令
             self.head_pos_cmd_publisher.publish(msg)
@@ -242,6 +242,7 @@ class YoloDetectNode(Node):
         # 日志输出过滤状态
         if self.target_class_ids:
             self.get_logger().info(f"类别过滤已启用，检测目标: {target_classes}")
+            self.target_classes = target_classes
         else:
             self.get_logger().info("类别过滤已禁用，检测所有物体")
 
@@ -341,7 +342,7 @@ class YoloDetectNode(Node):
         self.grasp_candidate_pub = self.create_publisher(
             GraspCandidate, '/grasp_candidate', 10
         )
-        self.get_logger().info("✓ 抓取候选点发布者已创建（/grasp_candidate）")
+        # self.get_logger().info("✓ 抓取候选点发布者已创建（/grasp_candidate）")
    
     def _parse_target_classes_from_args(self):
         """
@@ -374,14 +375,14 @@ class YoloDetectNode(Node):
                 # 如果有提供类别参数，则使用提供的值
                 if classes:
                     target_classes = classes
-                    print(f"[INFO] 从命令行解析到目标类别: {target_classes}")
+                    self.get_logger().info(f"[INFO] 从命令行解析到目标类别: {target_classes}")
                 else:
-                    print(f"[WARN] --target_classes 后没有指定类别，使用默认值: {target_classes}")
+                    self.get_logger().info(f"[WARN] --target_classes 后没有指定类别，使用默认值: {target_classes}")
             except Exception as e:
-                print(f"[ERROR] 解析命令行参数失败: {e}，使用默认值: {target_classes}")
+                self.get_logger().error(f"[ERROR] 解析命令行参数失败: {e}，使用默认值: {target_classes}")
         else:
-            print(f"[INFO] 未指定 --target_classes 参数，使用默认值: {target_classes}")
-            print(f"[INFO] 使用方法: python3 -m grab_demo.yolo_detect_node --target_classes apple orange")
+            self.get_logger().info(f"[INFO] 未指定 --target_classes 参数，使用默认值: {target_classes}")
+            self.get_logger().info(f"[INFO] 使用方法: python3 -m grab_demo.yolo_detect_node --target_classes apple orange")
         
         return target_classes
 
@@ -407,11 +408,11 @@ class YoloDetectNode(Node):
                     frame = sys.argv[idx + 1]
                     if not frame.startswith('--'):
                         target_frame = frame
-                        print(f"[INFO] 从命令行解析到目标坐标系: {target_frame}")
+                        self.get_logger().info(f"[INFO] 从命令行解析到目标坐标系: {target_frame}")
             except Exception as e:
-                print(f"[ERROR] 解析目标坐标系参数失败: {e}，使用默认值: {target_frame}")
+                self.get_logger().info(f"[ERROR] 解析目标坐标系参数失败: {e}，使用默认值: {target_frame}")
         else:
-            print(f"[INFO] 未指定 --target_frame 参数，使用默认值: {target_frame}")
+            self.get_logger().info(f"[INFO] 未指定 --target_frame 参数，使用默认值: {target_frame}")
             # print(f"[INFO] 使用方法: ros2 run grab_demo yolo_detect_node")
         
         return target_frame
@@ -575,8 +576,7 @@ class YoloDetectNode(Node):
             target_class_names = ', '.join([self.class_names[cid] for cid in self.target_class_ids])
             other_objects_str = ', '.join([f"{name}({count})" for name, count in other_objects.items()])
             
-            self.get_logger().info(f"未检测到目标物体: {target_class_names} | 检测到其他物体: {other_objects_str}")
-            # self.get_logger().info("-" * 50)
+            # self.get_logger().info(f"未检测到目标物体: {target_class_names} | 检测到其他物体: {other_objects_str}")
             
             # 返回False，表示过滤失败，调用方应忽略本帧
             return False
@@ -1536,11 +1536,11 @@ def main():
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        if rclpy.ok():
-            print("\n用户中断程序")
+        print("\n用户中断程序")
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":
