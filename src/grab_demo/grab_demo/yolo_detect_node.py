@@ -67,7 +67,7 @@ class YoloDetectNode(Node):
         self._init_tf_transforms()           # TF2 坐标系变换配置
         self._init_grasp_candidate_pub()     # 抢取候选点发布者
 
-        self.get_logger().info(f"✓ YoloDetectNode 初始化完成，正在等待包含[{self.target_classes}]的图像数据...")
+        self.get_logger().info(f"✓ YoloDetectNode 初始化完成，正在等待包含{self.target_classes}的图像数据...")
 
     def _init_head_pose(self):
         self.head_pos_cmd_publisher = self.create_publisher(CmdSetMotorPosition, '/head/cmd_pos', 10)
@@ -735,8 +735,8 @@ class YoloDetectNode(Node):
         depth_value = depth_img[int(y), int(x)]
         
         # 检查深度值是否有效（0表示无效/无法识别）
-        if depth_value == 0:
-            self.get_logger().warn(f"Invalid depth value at ({x}, {y})")
+        # if depth_value == 0:
+        #     self.get_logger().warn(f"Invalid depth value at ({x}, {y})")
         
         return depth_value
 
@@ -924,32 +924,19 @@ class YoloDetectNode(Node):
            - 原点在相机镜头的光学中心
         
         2. TF2变换：通过查询TF树获得相机坐标系到目标坐标系的变换矩阵
-           - 从 ob_camera_head_color_frame 到 L_base_link（或指定的目标坐标系）
+           - 从 ob_camera_head_color_frame 到 pelvis 的变换
            - 该变换包含相对位置和相对旋转
         
         3. 输出：目标坐标系下的3D点 (X_target, Y_target, Z_target)
-           - 通常是 L_base_link 或 R_base_link
-           - 这是机器人抓取基准坐标系
-        
-        重要概念：
-        ---------
-        - 相机光学坐标系 (ob_camera_head_color_frame)
-          * OpenCV和ROS深度相机的标准坐标系
-          * X向右，Y向下，Z向前（沿光轴）
-          * pixel_to_3d_camera_coords() 输出就是这个坐标系
-        
-        - 目标基座坐标系 (L_base_link 或 R_base_link)
-          * 机器人腿部基座坐标系（ROS标准右手系）
-          * 是抓取操作的运动基准
-          * 抓取规划器需要在这个坐标系下工作
-        
+           - 是 pelvis 坐标系下的坐标
+               
         Args:
             point_camera (dict): 相机坐标系下的3D点
                 包含键值：'X', 'Y', 'Z'（单位：米）
                 通常来自 pixel_to_3d_camera_coords() 的返回值
             
             target_frame (str): 目标坐标系名称
-                如果为None，则使用初始化时指定的 self.target_frame
+                如果为None，则使用初始化时指定的 self.target_frame，值为 pelvis
         
         Returns:
             dict: 目标坐标系下的3D点，包含：

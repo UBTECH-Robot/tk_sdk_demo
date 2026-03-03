@@ -143,13 +143,24 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
             with self.state_lock:
                 self.state = GraspState.MOVING
 
-            if self.is_pose_match_current_pose(self.prepare_pose['left_arm'][1]) and self.is_pose_match_current_pose(self.prepare_pose['right_arm'][1]):
+            pose_ready = False
+            if self.is_angle_match_current_angle(self.prepare_pose['left_arm'][1]) and self.is_angle_match_current_angle(self.prepare_pose['right_arm'][1]):
                 self.get_logger().info('✓ 手臂已在准备姿态，无需移动')
             else:
-                if not self.arm_pose_init():
-                    print('手臂未到达准备姿态，取消本次抓取。')
-                    self._wait_for_user_continue()
-                    return
+                ee_link = 'R_base_link' if 'right' in candidate.group_name else 'L_base_link'
+                transform, actual_pos, actual_quat = self.get_current_end_effector_transform(ee_link=ee_link)
+                if transform is not None and actual_pos is not None and actual_pos.z > 0.1:
+                    self.get_logger().info(f'当前末端位置: x={actual_pos.x:.4f}, y={actual_pos.y:.4f}, z={actual_pos.z:.4f}')
+                    # 如果末端坐标的z轴大于10cm，则认为当前末端位置可以直接移动到准备姿态的最终位置，不会再有障碍物碰撞风险，当然移动之前也会让用户确认
+                    pose_ready = self.arm_to_prepare_end_angle()
+                else:
+                    self.get_logger().warn('无法获取当前末端位置或者末端位置过低，需要完整执行准备姿态运动')
+                    pose_ready = self.arm_angle_init()
+
+            if not pose_ready:
+                print('手臂未到达准备姿态，取消本次抓取。')
+                self._wait_for_user_continue()
+                return
             
             self.hand_open(candidate.group_name)  # 确保手指张开
 
@@ -162,7 +173,7 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
                 return
 
             # ── 阶段 4：移动到预抓取位姿（含预览+确认） ─────────────
-            if not self.arm_to_pose(
+            if not self.arm_to_angle(
                 pre_grasp_joint_positions,
                 spd=VELOCITY_LIMIT / 2,
                 publish_ghost=True,
@@ -184,7 +195,7 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
                 return
 
             # ── 阶段 6：执行最终下探运动（含预览+确认） ──────────────
-            if not self.arm_to_pose(
+            if not self.arm_to_angle(
                 final_joint_positions,
                 spd=VELOCITY_LIMIT / 2,
                 publish_ghost=True,
@@ -226,10 +237,10 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
 
             safe_pose = self.prepare_pose[candidate.group_name][1]
 
-            # yes = self.arm_to_pose(safe_pose_after_grasp[candidate.group_name], spd=VELOCITY_LIMIT / 2, publish_ghost=False, require_confirm=False)
-            yes = self.arm_to_pose(safe_pose_after_grasp[candidate.group_name], spd=VELOCITY_LIMIT / 2)
+            # yes = self.arm_to_angle(safe_pose_after_grasp[candidate.group_name], spd=VELOCITY_LIMIT / 2, publish_ghost=False, require_confirm=False)
+            yes = self.arm_to_angle(safe_pose_after_grasp[candidate.group_name], spd=VELOCITY_LIMIT / 2)
 
-            # yes = self.arm_to_pose(safe_pose, spd=VELOCITY_LIMIT / 2)  # 运动到安全姿态
+            # yes = self.arm_to_angle(safe_pose, spd=VELOCITY_LIMIT / 2)  # 运动到安全姿态
             if not yes:
                 self.get_logger().error('已取消运动到安全位姿，本次抓取流程结束。')
                 self._wait_for_user_continue()
@@ -243,7 +254,7 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
             self.get_logger().info(f'准备放置到: {place_location["name"]}')
             put_pose = place_location['pose'][candidate.group_name]
             
-            yes = self.arm_to_pose(put_pose, spd=VELOCITY_LIMIT / 2)
+            yes = self.arm_to_angle(put_pose, spd=VELOCITY_LIMIT / 2)
             if not yes:
                 self.get_logger().error('已取消运动到放置位姿，本次抓取流程结束。')
                 self._wait_for_user_continue()
@@ -254,7 +265,7 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
 
             self.hand_open(candidate.group_name)  # 放开物体
 
-            yes = self.arm_to_pose(safe_pose, spd=VELOCITY_LIMIT / 2)  # 运动到安全姿态
+            yes = self.arm_to_angle(safe_pose, spd=VELOCITY_LIMIT / 2)  # 运动到安全姿态
             if not yes:
                 self.get_logger().error('已取消运动到安全位姿，本次抓取流程结束。')
 

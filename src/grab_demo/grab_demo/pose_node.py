@@ -105,13 +105,13 @@ def main():
     try:
         if args.action == "p": # prepare
 
-            node.arm_pose_init()
+            node.arm_angle_init()
 
             node.head_pose_init()
 
             node.hand_pose_init()
         elif args.action == "e": # end
-            node.arm_pose_reverse_init()
+            node.arm_angle_reverse_init()
 
     except KeyboardInterrupt:
         print('\n用户中断程序')

@@ -295,14 +295,14 @@ class ArmControlMixin:
 
         return None
 
-    def is_pose_match_current_pose(self, target_pose: dict, log_mismatch: bool = True) -> bool:
-        """判断目标电机姿态是否与当前关节状态一致。
+    def is_angle_match_current_angle(self, target_angle: dict, log_mismatch: bool = True) -> bool:
+        """判断指定的目标各电机关节角度是否与当前/joint_states话题下的关节角度一致。
 
         参数:
-            target_pose: {电机ID(int或str): 目标角度(float)}
+            target_angle: {电机ID(int或str): 目标角度(float)}
 
         返回:
-            True: target_pose 中所有关节都与 current_joint_state 对应关节一致
+            True: target_angle 中所有角度都与 current_joint_state 对应关节一致
             False: 任一关节不一致 / 关节缺失 / current_joint_state 未就绪
         """
         while not self.current_joint_state:
@@ -324,7 +324,7 @@ class ArmControlMixin:
             for joint_name, joint_pos in zip(current.name, current.position)
         }
 
-        for motor_id, target_value in target_pose.items():
+        for motor_id, target_value in target_angle.items():
             motor_id_str = str(motor_id)
             joint_name = motor_to_joint_map.get(motor_id_str)
             if joint_name is None:
@@ -339,16 +339,16 @@ class ArmControlMixin:
             if not math.isclose(float(target_value), float(current_value), abs_tol=POSE_MATCH_ABS_TOL):
                 if log_mismatch:
                     self.get_logger().info(
-                        f'关节 {joint_name}（电机{motor_id_str}）姿态不匹配：'
+                        f'关节 {joint_name}（电机{motor_id_str}）角度不匹配：'
                         f'目标 {target_value:.5f} rad vs 当前 {current_value:.5f} rad'
                     )
                 return False
 
         return True
 
-    def arm_to_pose(
+    def arm_to_angle(
         self,
-        pose: dict,
+        angle: dict,
         spd: float = VELOCITY_LIMIT,
         publish_ghost: bool = True,
         require_confirm: bool = True,
@@ -357,7 +357,7 @@ class ArmControlMixin:
         """将手臂移动到指定关节角度
 
         参数:
-            pose: {电机ID(int或str): 目标角度(float)}
+            angle: {电机ID(int或str): 目标角度(float)}
             spd:  运动速度（弧度/秒），默认使用 VELOCITY_LIMIT
             publish_ghost: 是否在发送运动命令前自动发布一次 GUI 预览
             require_confirm: 是否在发送运动前进行 yes/no 交互确认
@@ -368,7 +368,7 @@ class ArmControlMixin:
             False: 用户取消运动
         """
         if publish_ghost:
-            self._publish_model_ghost(pose)
+            self._publish_model_ghost(angle)
 
         if require_confirm:
             while True:
@@ -388,7 +388,7 @@ class ArmControlMixin:
         msg = CmdSetMotorPosition()
         msg.header = header
 
-        for k, v in pose.items():
+        for k, v in angle.items():
             cmd = SetMotorPosition()
             cmd.name = int(k)
             cmd.pos  = float(v)
@@ -403,7 +403,7 @@ class ArmControlMixin:
         # 最多等待 7s；若提前到位则提前返回
         deadline = time.time() + 7.0
         while True:
-            if self.is_pose_match_current_pose(pose, log_mismatch=False):
+            if self.is_angle_match_current_angle(angle, log_mismatch=False):
                 self.get_logger().info('✓ 手臂已到达目标位姿')
                 return True
 
@@ -425,7 +425,32 @@ class ArmControlMixin:
         msg.data = json_str
         self.joint_command_pub.publish(msg)
 
-    def arm_pose_init(self) -> bool:
+    def arm_to_prepare_end_angle(self) -> bool:
+        """引导手臂直接进入抓取准备的最终姿态，需用户确认再执行。
+
+        返回: True 表示全部成功执行，False 表示用户中止。
+        """
+        left_arm_poses  = prepare_pose['left_arm']
+        right_arm_poses = prepare_pose['right_arm']
+        for idx, left_pose in enumerate(left_arm_poses):
+            if idx != len(left_arm_poses) - 1:
+                continue
+            merged_pose = {**left_pose, **right_arm_poses[idx]}
+            ok = self.arm_to_angle(
+                merged_pose,
+                publish_ghost=True,
+                require_confirm=True,
+                confirm_prompt=(
+                    f'[{idx + 1}/{len(left_arm_poses)}] '
+                    f'检测到末端位置较高，是否直接移动手臂到准备姿态的最终姿态？'
+                ),
+            )
+            if not ok:
+                print('✓ 手臂过渡已中止')
+                return False
+        return True
+
+    def arm_angle_init(self) -> bool:
         """引导手臂逐段进入抓取准备姿态，每段均需用户确认再执行。
 
         返回: True 表示全部阶段都成功执行，False 表示用户中止。
@@ -434,7 +459,7 @@ class ArmControlMixin:
         right_arm_poses = prepare_pose['right_arm']
         for idx, left_pose in enumerate(left_arm_poses):
             merged_pose = {**left_pose, **right_arm_poses[idx]}
-            ok = self.arm_to_pose(
+            ok = self.arm_to_angle(
                 merged_pose,
                 publish_ghost=True,
                 require_confirm=True,
@@ -448,7 +473,7 @@ class ArmControlMixin:
                 return False
         return True
     
-    def arm_pose_reverse_init(self) -> bool:
+    def arm_angle_reverse_init(self) -> bool:
         """引导手臂逐段退回安全姿态，每段均需用户确认再执行。
 
         返回: True 表示全部阶段都成功执行，False 表示用户中止。
@@ -457,7 +482,7 @@ class ArmControlMixin:
         right_arm_end_pose = end_pose_sequence['right_arm']
         for idx, left_pose in enumerate(left_arm_end_pose):
             merged_pose = {**left_pose, **right_arm_end_pose[idx]}
-            ok = self.arm_to_pose(
+            ok = self.arm_to_angle(
                 merged_pose,
                 publish_ghost=True,
                 require_confirm=True,
