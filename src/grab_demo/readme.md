@@ -5,6 +5,11 @@
 1. tiangong2pro_tf
 2. tk_sdk_demo
 
+```bash
+git clone "https://github.com/UBTECH-Robot/tiangong2pro_tf.git"
+git clone "https://github.com/UBTECH-Robot/tk_sdk_demo.git"
+```
+
 将两个项目都放到天工 192.168.41.2 的 orin 板上，就会有如下两个目录：
 /home/nvidia/tiangong2pro_tf/
 /home/nvidia/tk_sdk_demo/
