@@ -195,10 +195,10 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
                 self._wait_for_user_continue()
                 return
 
-            # ── 阶段 6：执行最终下探运动（含预览+确认） ──────────────
+            # ── 阶段 6：从预抓取位姿移动到抓取位姿（含预览+确认） ──────────────
             if not self.arm_to_angle(
                 final_joint_positions,
-                spd=VELOCITY_LIMIT / 2,
+                spd=VELOCITY_LIMIT / 3,
                 publish_ghost=True,
                 require_confirm=True,
                 confirm_prompt='是否从预抓取位姿移动到抓取位姿？',
@@ -255,7 +255,7 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
             self.get_logger().info(f'准备放置到: {place_location["name"]}')
             put_pose = place_location['pose'][candidate.group_name]
             
-            yes = self.arm_to_angle(put_pose, spd=VELOCITY_LIMIT / 2)
+            yes = self.arm_to_angle(put_pose, spd=VELOCITY_LIMIT / 1.3)
             if not yes:
                 self.get_logger().error('已取消运动到放置位姿，本次抓取流程结束。')
                 self._wait_for_user_continue()
@@ -266,7 +266,7 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
 
             self.hand_open(candidate.group_name)  # 放开物体
 
-            yes = self.arm_to_angle(safe_pose, spd=VELOCITY_LIMIT / 2, publish_ghost=False, require_confirm=False)  # 运动到安全姿态
+            yes = self.arm_to_angle(safe_pose, spd=VELOCITY_LIMIT / 1.3, publish_ghost=False, require_confirm=False)  # 运动到安全姿态
             if not yes:
                 self.get_logger().error('已取消运动到安全位姿，本次抓取流程结束。')
 
