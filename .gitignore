@@ -15,3 +15,4 @@ moveit2_config_bak
 # 大型二进制文件（自行管理，不纳入 git 追踪）
 src/grab_demo/torch-*.whl
 src/grab_demo/libnccl2_*.deb
+vnc/pkg/turbovnc_*.deb
