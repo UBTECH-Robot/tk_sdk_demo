@@ -47,7 +47,7 @@ restore_apt_sources() {
         echo
         log_section "还原 apt 源"
         sudo cp "$SOURCES_BACKUP" "$SOURCES_LIST"
-        sudo apt update -qq
+        # sudo apt update 
         sudo rm -f "$SOURCES_BACKUP"
         log_ok "已还原至原安装源：$SOURCES_LIST"
     fi
@@ -60,7 +60,7 @@ check_apt_speed() {
     log_info "执行 apt update 测速（慢于 ${APT_SPEED_SLOW_THRESHOLD}s 视为过慢，最长等待 ${timeout_val}s）..."
     local start end duration
     start=$(date +%s)
-    sudo timeout "$timeout_val" apt update -qq > /dev/null 2>&1 || true
+    sudo timeout "$timeout_val" apt update || true
     end=$(date +%s)
     duration=$(( end - start ))
     log_info "apt update 耗时：${duration}s"
@@ -92,7 +92,7 @@ ensure_fast_apt_sources() {
     log_section "apt 源速度检测"
     if ! check_apt_speed; then
         switch_to_fast_mirror
-        sudo apt update -qq
+        sudo apt update
     fi
 }
 
@@ -196,7 +196,7 @@ ensure_yolo_model() {
 # 6. MoveIt2
 install_moveit() {
     log_section "步骤 6/6：安装 MoveIt2"
-    sudo apt update -qq
+    sudo apt update
     sudo apt install -y \
         ros-humble-moveit \
         ros-humble-moveit-ros-visualization
