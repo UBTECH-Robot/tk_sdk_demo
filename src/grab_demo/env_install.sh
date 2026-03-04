@@ -132,9 +132,9 @@ install_ros_image_packages() {
     sudo apt install -y \
         ros-humble-cv-bridge \
         ros-humble-image-transport \
-        ros-humble-sensor-msgs \
-        python3-opencv \
-        python3-numpy
+        ros-humble-sensor-msgs #\
+        # python3-opencv \
+        # python3-numpy
     log_ok "ROS 图像依赖安装完成"
 }
 

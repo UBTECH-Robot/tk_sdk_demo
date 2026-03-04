@@ -17,7 +17,7 @@ log_skip()    { echo "  » 未安装，跳过：$1"; }
 apt_remove() {
     local pkg="$1"
     if dpkg -s "$pkg" &>/dev/null; then
-        sudo apt remove --purge -y "$pkg"
+        sudo apt remove -y "$pkg"
         log_ok "已卸载：$pkg"
     else
         log_skip "$pkg"
@@ -75,11 +75,11 @@ uninstall_python_deps() {
     # 与 env_install.sh 中基础依赖对应
     pip_uninstall opencv-python
     pip_uninstall py-cpuinfo
-    pip_uninstall thop
-    pip_uninstall seaborn
-    pip_uninstall pandas
-    pip_uninstall numpy
-    pip_uninstall tqdm
+    # pip_uninstall thop
+    # pip_uninstall seaborn
+    # pip_uninstall pandas
+    # pip_uninstall numpy
+    # pip_uninstall tqdm
 
     log_ok "Python 依赖卸载完成"
 }
@@ -87,12 +87,12 @@ uninstall_python_deps() {
 # 1. ROS 图像相关软件包
 uninstall_ros_image_packages() {
     log_section "步骤 5/5：卸载 ROS 图像相关依赖"
-    apt_remove python3-numpy
-    apt_remove python3-opencv
+    # apt_remove python3-numpy
+    # apt_remove python3-opencv
     apt_remove ros-humble-sensor-msgs
     apt_remove ros-humble-image-transport
     apt_remove ros-humble-cv-bridge
-    sudo apt autoremove -y
+    echo "  ℹ 如需清理孤立依赖，请手动执行： sudo apt autoremove"
     log_ok "ROS 图像依赖卸载完成"
 }
 
