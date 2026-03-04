@@ -16,6 +16,8 @@ git clone "https://github.com/UBTECH-Robot/tk_sdk_demo.git"
 
 ## 2、环境安装
 
+如下步骤描述的是详细安装过程，有兴趣可以了解。如果不想过多了解，也可以直接执行 `bash src/grab_demo/env_install.sh` 脚本完成环境安装。
+
 本示例是运行在 192.168.41.2 的 orin 板上，所以以下安装步骤都是在该 orin 板上进行。
 
 #### 安装 ROS 图像相关
