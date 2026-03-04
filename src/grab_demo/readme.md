@@ -10,9 +10,11 @@ git clone "https://github.com/UBTECH-Robot/tiangong2pro_tf.git"
 git clone "https://github.com/UBTECH-Robot/tk_sdk_demo.git"
 ```
 
-将两个项目都放到天工 192.168.41.2 的 orin 板上，就会有如下两个目录：
+若将两个项目都放到天工 192.168.41.2 的 orin 板上，就会有如下两个目录：
 /home/nvidia/tiangong2pro_tf/
 /home/nvidia/tk_sdk_demo/
+
+注意，tiangong2pro_tf 项目并非一定要运行在 orin 板上，它只是一个用rviz来查看机器人模型并发布tf树的项目，运行在和 orin 板同一网段的ubuntu22.04就行，可以是一个安装了ubuntu22.04的PC，也可以在wsl2内运行的ubuntu22.04子系统，惟一需要确保的是该系统需要和 orin 板通过网线相连并处于同一网段，也就是 192.168.41 网段。
 
 ## 2、环境安装
 
