@@ -56,10 +56,11 @@ trap restore_apt_sources EXIT
 
 # 测试当前 apt 源速度，返回 0 表示速度合格，1 表示过慢
 check_apt_speed() {
-    log_info "执行 apt update 测速（慢于 ${APT_SPEED_SLOW_THRESHOLD}s 视为过慢）..."
+    local timeout_val=$(( APT_SPEED_SLOW_THRESHOLD + 5 ))
+    log_info "执行 apt update 测速（慢于 ${APT_SPEED_SLOW_THRESHOLD}s 视为过慢，最长等待 ${timeout_val}s）..."
     local start end duration
     start=$(date +%s)
-    timeout 30 sudo apt-get update > /dev/null 2>&1 || true
+    sudo timeout "$timeout_val" apt update -qq > /dev/null 2>&1 || true
     end=$(date +%s)
     duration=$(( end - start ))
     log_info "apt update 耗时：${duration}s"
@@ -128,11 +129,10 @@ download_if_missing() {
 # 1. ROS 图像相关软件包
 install_ros_image_packages() {
     log_section "步骤 1/6：安装 ROS 图像相关依赖"
-    sudo apt update -qq
     sudo apt install -y \
         ros-humble-cv-bridge \
         ros-humble-image-transport \
-        ros-humble-sensor-msgs #\
+        ros-humble-sensor-msgs
         # python3-opencv \
         # python3-numpy
     log_ok "ROS 图像依赖安装完成"
@@ -196,6 +196,7 @@ ensure_yolo_model() {
 # 6. MoveIt2
 install_moveit() {
     log_section "步骤 6/6：安装 MoveIt2"
+    sudo apt update -qq
     sudo apt install -y \
         ros-humble-moveit \
         ros-humble-moveit-ros-visualization
