@@ -25,9 +25,7 @@ YOLOV8_TXT="$GRAB_DEMO_DIR/yolov8n.txt"
 SOURCES_LIST="/etc/apt/sources.list"
 SOURCES_BACKUP=""          # 备份文件路径，切换源后设置
 SOURCES_FAST_MIRROR="$PROJECT_ROOT/vnc/sources.list.arm64"
-# 检测 apt 源速度时使用的测试 URL（ubuntu-ports 小文件，约 2KB）
-APT_SPEED_TEST_URL="http://ports.ubuntu.com/ubuntu-ports/dists/jammy/Release.gpg"
-APT_SPEED_TIMEOUT=8        # 超过该秒数视为源过慢（秒）
+APT_SPEED_SLOW_THRESHOLD=25  # apt update 耗时超过该秒数视为源过慢（秒）
 
 PIP_MIRROR="https://mirrors.cloud.tencent.com/pypi/simple"
 
@@ -58,14 +56,18 @@ trap restore_apt_sources EXIT
 
 # 测试当前 apt 源速度，返回 0 表示速度合格，1 表示过慢
 check_apt_speed() {
-    log_info "测试 apt 源速度（超时阈値 ${APT_SPEED_TIMEOUT}s）..."
-    if curl -fsSL --max-time "$APT_SPEED_TIMEOUT" \
-             -o /dev/null "$APT_SPEED_TEST_URL" 2>/dev/null; then
+    log_info "执行 apt update 测速（慢于 ${APT_SPEED_SLOW_THRESHOLD}s 视为过慢）..."
+    local start end duration
+    start=$(date +%s)
+    timeout 30 sudo apt-get update > /dev/null 2>&1 || true
+    end=$(date +%s)
+    duration=$(( end - start ))
+    log_info "apt update 耗时：${duration}s"
+    if [[ $duration -ge $APT_SPEED_SLOW_THRESHOLD ]]; then
+        return 1  # 过慢
+    else
         log_ok "apt 源速度正常"
         return 0
-    else
-        log_info "apt 源响应超过 ${APT_SPEED_TIMEOUT}s，视为過慢"
-        return 1
     fi
 }
 
