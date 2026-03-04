@@ -4,3 +4,4 @@ install_vnc.sh 用来执行安装
 
 vnc_manager.sh 用来管理vnc服务的启动和停止
 
+启动成功后，可通过浏览器访问 http://ip:8888 打开vnc桌面。

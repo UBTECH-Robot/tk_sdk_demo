@@ -1,0 +1,1 @@
+https://yzxrobot.oss-cn-shenzhen.aliyuncs.com/tiangong/lib/torch-2.7.0-cp310-cp310-linux_aarch64.whl
