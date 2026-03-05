@@ -150,8 +150,8 @@ ensure_fast_apt_sources() {
     log_section "apt 源速度检测"
     if ! check_apt_speed; then
         switch_to_fast_mirror
-        sudo apt update
     fi
+    sudo apt update
 }
 
 # 从 .txt 文件读取下载地址，若目标文件不存在则下载
@@ -255,7 +255,6 @@ ensure_yolo_model() {
 # 6. MoveIt2
 install_moveit() {
     log_section "步骤 6/6：安装 MoveIt2"
-    sudo apt update
     sudo apt install -y \
         ros-humble-moveit \
         ros-humble-moveit-ros-visualization
