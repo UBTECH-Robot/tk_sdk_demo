@@ -16,8 +16,10 @@ YOLO_MODELS_DIR="$PROJECT_ROOT/yolo_models"
 
 LIBNCCL_DEB="$GRAB_DEMO_DIR/libnccl2_2.22.3-1+cuda12.6_arm64.deb"
 LIBNCCL_TXT="$GRAB_DEMO_DIR/libnccl2_2.22.3-1+cuda12.6_arm64.txt"
+LIBNCCL_VERSION="2.22.3-1+cuda12.6"
 TORCH_WHL="$GRAB_DEMO_DIR/torch-2.7.0-cp310-cp310-linux_aarch64.whl"
 TORCH_TXT="$GRAB_DEMO_DIR/torch-2.7.0-cp310-cp310-linux_aarch64.txt"
+TORCH_VERSION="2.7.0"
 YOLOV8_PT="$YOLO_MODELS_DIR/yolov8n.pt"
 YOLOV8_TXT="$GRAB_DEMO_DIR/yolov8n.txt"
 
@@ -29,7 +31,6 @@ SOURCES_FAST_MIRROR="$PROJECT_ROOT/vnc/sources.list.arm64"
 ROS2_SOURCES_LIST=""        # 运行时自动检测
 ROS2_SOURCES_BACKUP=""      # 切换后设置
 ROS2_SOURCES_LINK_TARGET="" # 若原文件是符号链接，记录原链接目标，还原时重建
-ROS2_FAST_MIRROR="$GRAB_DEMO_DIR/ros2-tsinghua.sources"
 APT_SPEED_MIN_BPMS=1048576  # apt 源下载速度低于该小时就换源（1 MB/s）
 
 PIP_MIRROR="https://mirrors.cloud.tencent.com/pypi/simple"
@@ -40,6 +41,74 @@ log_ok()      { echo "  ✓ $1"; }
 log_skip()    { echo "  » 已存在，跳过：$1"; }
 log_err()     { echo "  ✗ $1" >&2; }
 log_info()    { echo "  ℹ $1"; }
+
+is_apt_package_installed() {
+    local pkg="$1"
+    local status
+    status="$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)"
+    [[ "$status" == "install ok installed" ]]
+}
+
+install_apt_packages() {
+    local pkgs_to_install=()
+    local pkg
+    for pkg in "$@"; do
+        if is_apt_package_installed "$pkg"; then
+            log_skip "apt 包：$pkg"
+        else
+            pkgs_to_install+=("$pkg")
+        fi
+    done
+
+    if (( ${#pkgs_to_install[@]} > 0 )); then
+        sudo apt install -y "${pkgs_to_install[@]}"
+        log_ok "apt 包安装完成：${pkgs_to_install[*]}"
+    else
+        log_ok "apt 包均已安装，无需安装"
+    fi
+}
+
+is_pip_spec_satisfied() {
+    local spec="$1"
+    local pkg_name="$spec"
+    local pkg_version=""
+
+    if [[ "$spec" == *"=="* ]]; then
+        pkg_name="${spec%%==*}"
+        pkg_version="${spec##*==}"
+    fi
+
+    python3 - "$pkg_name" "$pkg_version" << 'PY' >/dev/null 2>&1
+import sys
+from importlib import metadata
+
+name = sys.argv[1]
+target_version = sys.argv[2]
+
+try:
+    installed_version = metadata.version(name)
+except metadata.PackageNotFoundError:
+    sys.exit(1)
+
+if target_version and installed_version != target_version:
+    sys.exit(2)
+
+sys.exit(0)
+PY
+}
+
+install_pip_spec_if_needed() {
+    local spec="$1"
+    shift
+    local extra_args=("$@")
+
+    if is_pip_spec_satisfied "$spec"; then
+        log_skip "pip 包：$spec"
+    else
+        pip install -i "$PIP_MIRROR" "${extra_args[@]}" "$spec"
+        log_ok "pip 包安装完成：$spec"
+    fi
+}
 
 # ── apt 源速度检测与自动切换 ──────────────────────────────────────
 
@@ -96,6 +165,18 @@ check_apt_speed() {
     fi
 }
 
+# 生成 ROS2 镜像源文件：仅替换 URI，保留原始签名配置（包括内嵌公钥）
+generate_ros2_mirror_sources() {
+    local src_file="$1"
+    local dst_file="$2"
+
+    if grep -q '^URIs:' "$src_file"; then
+        sed 's#^URIs: .*#URIs: https://mirrors.tuna.tsinghua.edu.cn/ros2/ubuntu#; s#^Types: .*#Types: deb#' "$src_file" > "$dst_file"
+    else
+        sed 's#http://packages.ros.org/ros2/ubuntu#https://mirrors.tuna.tsinghua.edu.cn/ros2/ubuntu#g; s#https://packages.ros.org/ros2/ubuntu#https://mirrors.tuna.tsinghua.edu.cn/ros2/ubuntu#g; /^deb-src[[:space:]].*ros2\/ubuntu/d' "$src_file" > "$dst_file"
+    fi
+}
+
 # 备份当前源并切换到清华镜像
 switch_to_fast_mirror() {
     # 切换 Ubuntu 源
@@ -110,38 +191,46 @@ switch_to_fast_mirror() {
         SOURCES_SWITCHED=true
         log_ok "已切换 Ubuntu 源到清华镜像"
     fi
-    # 切换 ROS2 源
-    if [[ ! -f "$ROS2_FAST_MIRROR" ]]; then
-        log_err "备用 ROS2 镜像文件不存在：$ROS2_FAST_MIRROR"
-        log_info "ROS2 源保持不变"
-    else
-        # 自动检测当前 ROS2 源文件位置
-        for _f in /etc/apt/sources.list.d/ros2.list \
-                  /etc/apt/sources.list.d/ros2-latest.list \
-                  /etc/apt/sources.list.d/ros2.sources; do
-            if [[ -f "$_f" ]]; then
-                ROS2_SOURCES_LIST="$_f"
-                break
-            fi
-        done
-        if [[ -z "$ROS2_SOURCES_LIST" ]]; then
-            log_info "未检测到 ROS2 apt 源文件，跳过 ROS2 源切换"
-        else
-            # 若为符号链接：记录链接目标并解除链接，再 cp 新源文件到原位置
-            ROS2_SOURCES_BACKUP="${ROS2_SOURCES_LIST}.$(date +%Y%m%d_%H%M%S).bak"
-            if [[ -L "$ROS2_SOURCES_LIST" ]]; then
-                ROS2_SOURCES_LINK_TARGET=$(readlink "$ROS2_SOURCES_LIST")
-                log_info "ROS2 源是符号链接，链接目标：$ROS2_SOURCES_LINK_TARGET"
-                sudo rm -f "$ROS2_SOURCES_LIST"
-                sudo cp "$ROS2_FAST_MIRROR" "$ROS2_SOURCES_LIST"
-                log_ok "已切换 ROS2 源到清华镜像（已解除符号链接）"
-            else
-                log_info "备份现有 ROS2 源到：$ROS2_SOURCES_BACKUP"
-                sudo cp "$ROS2_SOURCES_LIST" "$ROS2_SOURCES_BACKUP"
-                sudo cp "$ROS2_FAST_MIRROR" "$ROS2_SOURCES_LIST"
-                log_ok "已切换 ROS2 源到清华镜像"
-            fi
+    # 切换 ROS2 源（仅替换 URI，保留当前签名配置）
+    for _f in /etc/apt/sources.list.d/ros2.list \
+              /etc/apt/sources.list.d/ros2-latest.list \
+              /etc/apt/sources.list.d/ros2.sources; do
+        if [[ -f "$_f" ]]; then
+            ROS2_SOURCES_LIST="$_f"
+            break
         fi
+    done
+    if [[ -z "$ROS2_SOURCES_LIST" ]]; then
+        log_info "未检测到 ROS2 apt 源文件，跳过 ROS2 源切换"
+    else
+        local ros2_src_for_render="$ROS2_SOURCES_LIST"
+        local ros2_rendered
+        ros2_rendered="$(mktemp)"
+
+        # 若为符号链接：记录链接目标；渲染时读取链接目标内容，确保拿到最新官方签名配置
+        if [[ -L "$ROS2_SOURCES_LIST" ]]; then
+            ROS2_SOURCES_LINK_TARGET=$(readlink "$ROS2_SOURCES_LIST")
+            log_info "ROS2 源是符号链接，链接目标：$ROS2_SOURCES_LINK_TARGET"
+            if [[ -f "$ROS2_SOURCES_LINK_TARGET" ]]; then
+                ros2_src_for_render="$ROS2_SOURCES_LINK_TARGET"
+            fi
+        else
+            ROS2_SOURCES_BACKUP="${ROS2_SOURCES_LIST}.$(date +%Y%m%d_%H%M%S).bak"
+            log_info "备份现有 ROS2 源到：$ROS2_SOURCES_BACKUP"
+            sudo cp "$ROS2_SOURCES_LIST" "$ROS2_SOURCES_BACKUP"
+        fi
+
+        generate_ros2_mirror_sources "$ros2_src_for_render" "$ros2_rendered"
+
+        if [[ -n "$ROS2_SOURCES_LINK_TARGET" ]]; then
+            sudo rm -f "$ROS2_SOURCES_LIST"
+            sudo cp "$ros2_rendered" "$ROS2_SOURCES_LIST"
+            log_ok "已切换 ROS2 源到清华镜像（保留官方签名配置，已解除符号链接）"
+        else
+            sudo cp "$ros2_rendered" "$ROS2_SOURCES_LIST"
+            log_ok "已切换 ROS2 源到清华镜像（保留官方签名配置）"
+        fi
+        rm -f "$ros2_rendered"
     fi
 }
 
@@ -187,7 +276,7 @@ download_if_missing() {
 # 1. ROS 图像相关软件包
 install_ros_image_packages() {
     log_section "步骤 1/6：安装 ROS 图像相关依赖"
-    sudo apt install -y \
+    install_apt_packages \
         ros-humble-cv-bridge \
         ros-humble-image-transport \
         ros-humble-sensor-msgs \
@@ -201,20 +290,23 @@ install_ros_image_packages() {
 install_python_deps() {
     log_section "步骤 2/6：安装 Python 依赖"
 
-    # 基础依赖
-    pip install -i "$PIP_MIRROR" \
-        tqdm==4.66.1 \
-        numpy==1.23.5 \
-        pandas==1.3.5 \
-        seaborn==0.13.0 \
-        thop \
-        py-cpuinfo==9.0.0 \
-        opencv-python==4.11.0.86
+    local base_specs=(
+        "tqdm==4.66.1"
+        "numpy==1.23.5"
+        "pandas==1.3.5"
+        "seaborn==0.13.0"
+        "thop"
+        "py-cpuinfo==9.0.0"
+        "opencv-python==4.11.0.86"
+    )
+    local spec
+    for spec in "${base_specs[@]}"; do
+        install_pip_spec_if_needed "$spec"
+    done
 
     # ultralytics 和 torchvision 不带依赖安装，避免覆盖 arm64 专用 torch
-    pip install -i "$PIP_MIRROR" --no-deps \
-        ultralytics==8.3.232 \
-        torchvision==0.22.0
+    install_pip_spec_if_needed "ultralytics==8.3.232" --no-deps
+    install_pip_spec_if_needed "torchvision==0.22.0" --no-deps
 
     log_ok "Python 依赖安装完成"
 }
@@ -224,13 +316,21 @@ install_libnccl2() {
     log_section "步骤 3/6：安装 libnccl2"
     download_if_missing "$LIBNCCL_DEB" "$LIBNCCL_TXT" "libnccl2 deb 包"
 
-    sudo dpkg -i "$LIBNCCL_DEB"
+    local installed_libnccl_version
+    installed_libnccl_version="$(dpkg-query -W -f='${Version}' libnccl2 2>/dev/null || true)"
+    if [[ "$installed_libnccl_version" == "$LIBNCCL_VERSION" ]]; then
+        log_skip "libnccl2（版本 $LIBNCCL_VERSION）"
+    else
+        sudo dpkg -i "$LIBNCCL_DEB"
+        log_ok "libnccl2 安装完成"
+    fi
     sudo ldconfig
-    log_ok "libnccl2 安装完成"
 
     echo "  验证 libnccl.so.2："
-    if ldconfig -p | grep -q "libnccl.so.2"; then
-        ldconfig -p | grep "libnccl.so.2"
+    local ldconfig_output
+    ldconfig_output="$(ldconfig -p 2>/dev/null || true)"
+    if grep -Fq "libnccl.so.2" <<< "$ldconfig_output"; then
+        grep -F "libnccl.so.2" <<< "$ldconfig_output"
     else
         echo "  ⚠ 未找到 libnccl.so.2，请检查安装"
     fi
@@ -240,8 +340,23 @@ install_libnccl2() {
 install_torch() {
     log_section "步骤 4/6：安装 torch（arm64 GPU 版）"
     download_if_missing "$TORCH_WHL" "$TORCH_TXT" "torch whl 包"
-    pip install "$TORCH_WHL"
-    log_ok "torch 安装完成"
+
+    local installed_torch_version
+    installed_torch_version="$(python3 - << 'PY'
+try:
+    import torch
+    print(torch.__version__)
+except Exception:
+    pass
+PY
+)"
+
+    if [[ "$installed_torch_version" == "$TORCH_VERSION" ]]; then
+        log_skip "torch（版本 $TORCH_VERSION）"
+    else
+        pip install "$TORCH_WHL"
+        log_ok "torch 安装完成"
+    fi
 }
 
 # 5. YOLO 预训练模型
@@ -255,7 +370,7 @@ ensure_yolo_model() {
 # 6. MoveIt2
 install_moveit() {
     log_section "步骤 6/6：安装 MoveIt2"
-    sudo apt install -y \
+    install_apt_packages \
         ros-humble-moveit \
         ros-humble-moveit-ros-visualization
     log_ok "MoveIt2 安装完成"
