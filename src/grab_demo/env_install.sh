@@ -25,7 +25,12 @@ YOLOV8_TXT="$GRAB_DEMO_DIR/yolov8n.txt"
 SOURCES_LIST="/etc/apt/sources.list"
 SOURCES_BACKUP=""          # 备份文件路径，切换源后设置
 SOURCES_FAST_MIRROR="$PROJECT_ROOT/vnc/sources.list.arm64"
-APT_SPEED_SLOW_THRESHOLD=25  # apt update 耗时超过该秒数视为源过慢（秒）
+# ROS2 apt 源（单独的 sources.list.d 文件）
+ROS2_SOURCES_LIST=""        # 运行时自动检测
+ROS2_SOURCES_BACKUP=""      # 切换后设置
+ROS2_SOURCES_LINK_TARGET="" # 若原文件是符号链接，记录原链接目标，还原时重建
+ROS2_FAST_MIRROR="$GRAB_DEMO_DIR/ros2-tsinghua.sources"
+APT_SPEED_MIN_BPMS=1048576  # apt 源下载速度低于该小时就换源（1 MB/s）
 
 PIP_MIRROR="https://mirrors.cloud.tencent.com/pypi/simple"
 
@@ -47,44 +52,97 @@ restore_apt_sources() {
         echo
         log_section "还原 apt 源"
         sudo cp "$SOURCES_BACKUP" "$SOURCES_LIST"
-        # sudo apt update 
         sudo rm -f "$SOURCES_BACKUP"
-        log_ok "已还原至原安装源：$SOURCES_LIST"
+        log_ok "已还原 Ubuntu 源：$SOURCES_LIST"
+    fi
+    if [[ -n "$ROS2_SOURCES_LINK_TARGET" && -n "$ROS2_SOURCES_LIST" ]]; then
+        # 原文件是符号链接：删除当前普通文件，重建符号链接
+        sudo rm -f "$ROS2_SOURCES_LIST"
+        sudo ln -s "$ROS2_SOURCES_LINK_TARGET" "$ROS2_SOURCES_LIST"
+        log_ok "已还原 ROS2 源（重建符号链接 $ROS2_SOURCES_LIST → $ROS2_SOURCES_LINK_TARGET）"
+    elif [[ -n "$ROS2_SOURCES_BACKUP" && -f "$ROS2_SOURCES_BACKUP" && -n "$ROS2_SOURCES_LIST" ]]; then
+        # 原文件是普通文件：直接覆盖还原内容
+        sudo cp "$ROS2_SOURCES_BACKUP" "$ROS2_SOURCES_LIST"
+        sudo rm -f "$ROS2_SOURCES_BACKUP"
+        log_ok "已还原 ROS2 源：$ROS2_SOURCES_LIST"
     fi
 }
 trap restore_apt_sources EXIT
 
 # 测试当前 apt 源速度，返回 0 表示速度合格，1 表示过慢
+# 做法：从 sources.list 动态读取镜像地址，下载 ~2KB 的 Release.gpg 小文件测速
 check_apt_speed() {
-    local timeout_val=$(( APT_SPEED_SLOW_THRESHOLD + 5 ))
-    log_info "执行 apt update 测速（慢于 ${APT_SPEED_SLOW_THRESHOLD}s 视为过慢，最长等待 ${timeout_val}s）..."
-    local start end duration
-    start=$(date +%s)
-    sudo timeout "$timeout_val" apt update || true
-    end=$(date +%s)
-    duration=$(( end - start ))
-    log_info "apt update 耗时：${duration}s"
-    if [[ $duration -ge $APT_SPEED_SLOW_THRESHOLD ]]; then
+    local mirror_url
+    mirror_url=$(grep -m1 '^deb ' "$SOURCES_LIST" 2>/dev/null | awk '{print $2}')
+    if [[ -z "$mirror_url" ]]; then
+        log_info "无法解析 apt 源地址，跳过速度检测"
+        return 0
+    fi
+    local test_url="${mirror_url%/}/dists/jammy/Release.gpg"
+    log_info "检测 apt 源速度（下载 Release.gpg，低于 ${APT_SPEED_MIN_BPMS} B/s 就换源）..."
+    log_info "测试地址：$test_url"
+    local speed
+    speed=$(curl -fsSL --max-time 15 \
+        --write-out "%{speed_download}" \
+        -o /dev/null "$test_url" 2>/dev/null || echo "0")
+    # curl 输出的是浮点数（如 524288.000），取整数部分
+    speed=${speed%%.*}
+    log_info "测得速度：${speed} B/s（阈值：${APT_SPEED_MIN_BPMS} B/s）"
+    if [[ ${speed} -lt ${APT_SPEED_MIN_BPMS} ]]; then
         return 1  # 过慢
     else
-        log_ok "apt 源速度正常"
+        log_ok "apt 源速度正常（$(( speed / 1024 )) KB/s）"
         return 0
     fi
 }
 
 # 备份当前源并切换到清华镜像
 switch_to_fast_mirror() {
+    # 切换 Ubuntu 源
     if [[ ! -f "$SOURCES_FAST_MIRROR" ]]; then
-        log_err "备用镜像文件不存在：$SOURCES_FAST_MIRROR"
+        log_err "备用 Ubuntu 镜像文件不存在：$SOURCES_FAST_MIRROR"
         log_info "继续使用现有源，如安装失败请手动更换镜像"
-        return
+    else
+        SOURCES_BACKUP="${SOURCES_LIST}.$(date +%Y%m%d_%H%M%S).bak"
+        log_info "备份现有 Ubuntu 源到：$SOURCES_BACKUP"
+        sudo cp "$SOURCES_LIST" "$SOURCES_BACKUP"
+        sudo cp "$SOURCES_FAST_MIRROR" "$SOURCES_LIST"
+        SOURCES_SWITCHED=true
+        log_ok "已切换 Ubuntu 源到清华镜像"
     fi
-    SOURCES_BACKUP="${SOURCES_LIST}.$(date +%Y%m%d_%H%M%S).bak"
-    log_info "备份现有源到：$SOURCES_BACKUP"
-    sudo cp "$SOURCES_LIST" "$SOURCES_BACKUP"
-    sudo cp "$SOURCES_FAST_MIRROR" "$SOURCES_LIST"
-    SOURCES_SWITCHED=true
-    log_ok "已切换到清华镜像（脚本退出后将自动还原）"
+    # 切换 ROS2 源
+    if [[ ! -f "$ROS2_FAST_MIRROR" ]]; then
+        log_err "备用 ROS2 镜像文件不存在：$ROS2_FAST_MIRROR"
+        log_info "ROS2 源保持不变"
+    else
+        # 自动检测当前 ROS2 源文件位置
+        for _f in /etc/apt/sources.list.d/ros2.list \
+                  /etc/apt/sources.list.d/ros2-latest.list \
+                  /etc/apt/sources.list.d/ros2.sources; do
+            if [[ -f "$_f" ]]; then
+                ROS2_SOURCES_LIST="$_f"
+                break
+            fi
+        done
+        if [[ -z "$ROS2_SOURCES_LIST" ]]; then
+            log_info "未检测到 ROS2 apt 源文件，跳过 ROS2 源切换"
+        else
+            # 若为符号链接：记录链接目标并解除链接，再 cp 新源文件到原位置
+            ROS2_SOURCES_BACKUP="${ROS2_SOURCES_LIST}.$(date +%Y%m%d_%H%M%S).bak"
+            if [[ -L "$ROS2_SOURCES_LIST" ]]; then
+                ROS2_SOURCES_LINK_TARGET=$(readlink "$ROS2_SOURCES_LIST")
+                log_info "ROS2 源是符号链接，链接目标：$ROS2_SOURCES_LINK_TARGET"
+                sudo rm -f "$ROS2_SOURCES_LIST"
+                sudo cp "$ROS2_FAST_MIRROR" "$ROS2_SOURCES_LIST"
+                log_ok "已切换 ROS2 源到清华镜像（已解除符号链接）"
+            else
+                log_info "备份现有 ROS2 源到：$ROS2_SOURCES_BACKUP"
+                sudo cp "$ROS2_SOURCES_LIST" "$ROS2_SOURCES_BACKUP"
+                sudo cp "$ROS2_FAST_MIRROR" "$ROS2_SOURCES_LIST"
+                log_ok "已切换 ROS2 源到清华镜像"
+            fi
+        fi
+    fi
 }
 
 # 在所有 apt 操作前调用一次：检测速度，必要时自动切换

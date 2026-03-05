@@ -1,0 +1,5 @@
+Types: deb
+URIs: https://mirrors.tuna.tsinghua.edu.cn/ros2/ubuntu
+Suites: jammy
+Components: main
+Signed-By: /usr/share/keyrings/ros-archive-keyring.gpg
