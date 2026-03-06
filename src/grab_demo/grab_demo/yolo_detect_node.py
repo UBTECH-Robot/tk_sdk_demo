@@ -1,6 +1,7 @@
 import time
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from sensor_msgs.msg import Image, CameraInfo
 from geometry_msgs.msg import Pose, PoseStamped, PointStamped, TransformStamped
 from cv_bridge import CvBridge
@@ -254,22 +255,39 @@ class YoloDetectNode(Node):
         功能：同步来自不同话题的消息，允许时间戳有小偏差
         应用场景：不同传感器采样频率和发布时间不同，时间戳有轻微偏差
         """
-        # 创建彩色图像订阅器
-        color_sub = Subscriber(self, Image, "/ob_camera_head/color/image_raw")
-        
-        # 创建深度图像订阅器
-        depth_sub = Subscriber(self, Image, "/ob_camera_head/depth/image_raw")
-        
-        # 创建同步器：queue_size=10表示缓冲区大小，slop=0.1表示允许100ms的时间差
+        sensor_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+
+        color_topic = "/ob_camera_head/color/image_raw"
+        depth_topic = "/ob_camera_head/depth/image_raw"
+
+        # 创建彩色图像订阅器（BEST_EFFORT 避免触发重传风暴）
+        color_sub = Subscriber(self, Image, color_topic, qos_profile=sensor_qos)        
+        # 创建深度图像订阅器（BEST_EFFORT 避免触发重传风暴）
+        depth_sub = Subscriber(self, Image, depth_topic, qos_profile=sensor_qos)        
+        # 创建同步器：queue_size=20表示缓冲区大小（跨机器时适当增大以容忍乱序），
+        # slop=0.5 表示允许500ms的时间差（跨机器时网络抖动可能导致时间戳偏差增大）
         self.ts = ApproximateTimeSynchronizer(
             [color_sub, depth_sub],
-            queue_size=10,
-            slop=0.1
-        )
-        
+            queue_size=20,
+            slop=0.5
+        )        
         # 注册同步回调函数
         self.ts.registerCallback(self.synchronized_image_cb)
-        
+
+        # self._debug_color_rx_count = 0
+        # self._debug_depth_rx_count = 0
+        # self.color_debug_sub = self.create_subscription(
+        #     Image,
+        #     color_topic,
+        #     self._debug_color_image_cb,
+        #     sensor_qos
+        # )
+
         # 抓取点发布者
         self.grasp_pose_pub = self.create_publisher(PoseStamped, "/grasp_pose", 10)
         self.object_pose_pub = self.create_publisher(PoseStamped, "/object_pose", 10)
@@ -282,6 +300,9 @@ class YoloDetectNode(Node):
         # 存储最新的深度数据（用于在回调中访问）
         self.latest_depth_img = None
         self.latest_color_timestamp = None
+
+    def _debug_color_image_cb(self, msg: Image):
+        self.synchronized_image_cb(msg, None)
 
     def _init_camera_parameters(self):
         """初始化相机参数
@@ -723,6 +744,9 @@ class YoloDetectNode(Node):
         Returns:
             depth_value: 深度原始值（单位待确认），如果无效则返回0
         """
+        if depth_img is None:
+            self.get_logger().warn("Depth image is None")
+            return 0
         # 获取图像高度和宽度，防止坐标越界
         height, width = depth_img.shape[:2]
         
@@ -1251,6 +1275,8 @@ class YoloDetectNode(Node):
             depth_meters: 深度值（单位：米）
         """
         # 在深度图的对应位置绘制圆形标记
+        if img is None:
+            return
         cv2.circle(img, (center_x, center_y), 8, (255, 255, 255), 2)
         
         # 绘制十字叉标记
@@ -1368,7 +1394,9 @@ class YoloDetectNode(Node):
         # 深度图：使用 "passthrough" 保持原始编码格式
         # Orbbec 摄像头的深度图 encoding 是 "16UC1" 而不是 "mono16"
         # "passthrough" 表示不进行编码转换，直接传递原始数据
-        depth_img = self.bridge.imgmsg_to_cv2(depth_msg, desired_encoding="passthrough")
+        depth_img = None
+        if depth_msg:
+            depth_img = self.bridge.imgmsg_to_cv2(depth_msg, desired_encoding="passthrough")
         
         # 生成时间戳（同一帧使用相同时间戳）
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
@@ -1377,8 +1405,11 @@ class YoloDetectNode(Node):
 
         # 2. 保存深度原始图片（深度图需要进行可视化处理才能正确显示）
         # 深度图的像素值通常在0-5000mm范围内，需要归一化到0-255以便显示
-        depth_normalized = cv2.normalize(depth_img, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
-        depth_colored = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_TURBO)
+        depth_normalized = None
+        depth_colored = None
+        if depth_msg:
+            depth_normalized = cv2.normalize(depth_img, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
+            depth_colored = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_TURBO)
         # self.save_image(depth_colored, timestamp, suffix="raw_depth")
 
         # ============ YOLO物体识别 ============
@@ -1415,8 +1446,8 @@ class YoloDetectNode(Node):
         # 创建彩色图的副本用于绘制标注
         annotated_img = color_img.copy()
         
-        # 创建深度图的副本用于绘制标注（可视化版本）
-        depth_annotated = depth_colored.copy()
+        # 创建深度图的副本用于绘制标注（可视化版本）        
+        depth_annotated = depth_colored.copy() if depth_msg else None
 
         # 定义颜色列表（BGR格式）
         colors = [
@@ -1480,7 +1511,8 @@ class YoloDetectNode(Node):
         coords_3d_camera_frame = self.pixel_to_3d_camera_coords(cx, cy, cz)
         
         self.save_image(annotated_img, timestamp, suffix="detected_color")
-        self.save_image(depth_annotated, timestamp, suffix="detected_depth")
+        if depth_annotated is not None:
+            self.save_image(depth_annotated, timestamp, suffix="detected_depth")
         # 检查坐标转换是否成功，如果失败则忽略本次数据直接返回
         if not coords_3d_camera_frame.get('valid', False):
             self.get_logger().warn(f"⚠ 3D坐标转换失败：{coords_3d_camera_frame.get('error', '未知错误')}。忽略本帧数据，进行下次检测。")

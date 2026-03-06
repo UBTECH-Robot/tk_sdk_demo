@@ -280,6 +280,7 @@ install_ros_image_packages() {
         ros-humble-cv-bridge \
         ros-humble-image-transport \
         ros-humble-sensor-msgs \
+        ros-humble-robot-state-publisher \
         python3-pip
         # python3-opencv \
         # python3-numpy
