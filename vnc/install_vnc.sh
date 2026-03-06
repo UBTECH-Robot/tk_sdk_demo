@@ -169,65 +169,6 @@ install_virtualgl() {
     fi
 }
 
-# Function to install TurboVNC
-install_turbovnc() {
-    echo ""
-    echo -e "${GREEN}=== 安装 TurboVNC ===${NC}"
-    
-    # Check if TurboVNC is already installed
-    if [ -f /opt/TurboVNC/bin/vncserver ]; then
-        echo -e "${GREEN}TurboVNC 已安装，跳过安装${NC}"
-        /opt/TurboVNC/bin/vncserver -version 2>&1 | head -n 1 || true
-        return 0
-    fi
-    
-    # Determine TurboVNC package based on architecture
-    if [[ "$ARCH" == "x86_64" ]]; then
-        TURBOVNC_PACKAGE="turbovnc_3.2.1_amd64.deb"
-    elif [[ "$ARCH" == "aarch64" ]]; then
-        TURBOVNC_PACKAGE="turbovnc_3.2.1_arm64.deb"
-    else
-        echo -e "${RED}错误: 不支持的架构 $ARCH，无法安装 TurboVNC${NC}"
-        return 1
-    fi
-    
-    TURBOVNC_PATH="$SCRIPT_DIR/pkg/$TURBOVNC_PACKAGE"
-    
-    if [ -f "$TURBOVNC_PATH" ]; then
-        echo "使用 TurboVNC 安装包: $TURBOVNC_PACKAGE"
-        dpkg -i "$TURBOVNC_PATH" || apt-get install -f -y
-        TURBOVNC_INSTALLED=$?
-        if [ $TURBOVNC_INSTALLED -eq 0 ]; then
-            echo -e "${GREEN}TurboVNC 安装成功${NC}"
-        else
-            echo -e "${RED}TurboVNC 安装失败${NC}"
-            return 1
-        fi
-    else
-        echo -e "${RED}警告: 找不到 $TURBOVNC_PACKAGE (路径: $TURBOVNC_PATH)${NC}"
-        echo -e "${YELLOW}提示: 确保 pkg 目录中存在该文件${NC}"
-        TURBOVNC_INSTALLED=1
-        return 1
-    fi
-    
-    # Test TurboVNC installation
-    if [ -f /opt/TurboVNC/bin/vncserver ]; then
-        # Show TurboVNC info
-        echo ""
-        echo "TurboVNC 版本:"
-        /opt/TurboVNC/bin/vncserver -version 2>&1 | head -n 1 || true
-        
-        echo ""
-        echo -e "${YELLOW}提示: TurboVNC 是一个高性能 VNC 服务器${NC}"
-        echo "可选用途: 作为 x11vnc 的替代方案提供更好的性能"
-        
-        return 0
-    else
-        echo -e "${RED}TurboVNC 安装失败${NC}"
-        return 1
-    fi
-}
-
 # Function to check and install desktop environment
 check_and_install_desktop() {
     echo -e "${GREEN}检查桌面环境...${NC}"
@@ -374,8 +315,6 @@ install_vnc_server() {
     else
         echo -e "${RED}警告: 找不到 websockify-0.13.0.tar.gz${NC}"
     fi
-
-    # install_turbovnc
 }
 
 
