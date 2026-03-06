@@ -11,6 +11,9 @@ set -e
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# shellcheck source=../lib/apt_mirror_utils.sh
+source "$SCRIPT_DIR/../lib/apt_mirror_utils.sh"
+
 # Color definitions
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -225,70 +228,6 @@ install_turbovnc() {
     fi
 }
 
-# Function to test apt source speed
-test_apt_speed() {
-    echo -e "${GREEN}测试当前 APT 源速度...${NC}"
-    
-    # Update package list and measure time
-    START_TIME=$(date +%s)
-    timeout 30 apt-get update > /dev/null 2>&1 || true
-    END_TIME=$(date +%s)
-    
-    DURATION=$((END_TIME - START_TIME))
-    echo "APT 更新耗时: ${DURATION}秒"
-    
-    # If update takes more than 25 seconds, consider it slow
-    if [ $DURATION -ge 25 ]; then
-        return 1  # Slow
-    else
-        return 0  # Fast enough
-    fi
-}
-
-# Function to backup and switch to Tsinghua mirror
-switch_to_tsinghua_mirror() {
-    echo -e "${YELLOW}当前源速度较慢，切换到清华大学镜像源...${NC}"
-    
-    # Backup current sources
-    BACKUP_FILE="/etc/apt/sources.list.backup.$(date +%Y%m%d_%H%M%S)"
-    cp /etc/apt/sources.list "$BACKUP_FILE"
-    echo "已备份当前源到: $BACKUP_FILE"
-    
-    # Determine repository based on architecture
-    # ARM architectures use ubuntu-ports, x86 uses ubuntu
-    if [[ "$ARCH" == "aarch64" || "$ARCH" == "armv7l" || "$ARCH" == "armhf" ]]; then
-        echo "检测到 ARM 架构，使用 ubuntu-ports 仓库"
-        # Copy ARM sources.list
-        if [ -f "$SCRIPT_DIR/sources.list.arm64" ]; then
-            cp "$SCRIPT_DIR/sources.list.arm64" /etc/apt/sources.list
-        else
-            echo -e "${RED}错误: 找不到 sources.list.arm64 文件${NC}"
-            exit 1
-        fi
-    else
-        echo "检测到 x86_64 架构，使用 ubuntu 仓库"
-        # Copy x86_64 sources.list
-        if [ -f "$SCRIPT_DIR/sources.list.x86_64" ]; then
-            cp "$SCRIPT_DIR/sources.list.x86_64" /etc/apt/sources.list
-        else
-            echo -e "${RED}错误: 找不到 sources.list.x86_64 文件${NC}"
-            exit 1
-        fi
-    fi
-    
-    echo -e "${GREEN}已切换到清华源${NC}"
-    apt-get update
-}
-
-# Function to restore original sources
-restore_original_sources() {
-    if [ -n "$BACKUP_FILE" ] && [ -f "$BACKUP_FILE" ]; then
-        echo -e "${GREEN}恢复原始 APT 源...${NC}"
-        cp "$BACKUP_FILE" /etc/apt/sources.list
-        echo "已恢复原始源"
-    fi
-}
-
 # Function to check and install desktop environment
 check_and_install_desktop() {
     echo -e "${GREEN}检查桌面环境...${NC}"
@@ -445,14 +384,8 @@ install_vnc_server() {
 ###############################################################################
 
 # Test source speed and switch if necessary
-SWITCHED_SOURCE=false
-if ! test_apt_speed; then
-    switch_to_tsinghua_mirror
-    SWITCHED_SOURCE=true
-else
-    echo -e "${GREEN}当前源速度正常，继续使用当前源${NC}"
-    apt-get update
-fi
+ensure_fast_ubuntu_source
+apt-get update
 
 # Check and install desktop environment
 check_and_install_desktop
@@ -469,10 +402,5 @@ fi
 
 # Configure firewall
 configure_firewall
-
-# Restore original sources if switched
-if [ "$SWITCHED_SOURCE" = true ]; then
-    restore_original_sources
-fi
 
 exit 0

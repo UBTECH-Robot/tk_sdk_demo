@@ -23,17 +23,11 @@ TORCH_VERSION="2.7.0"
 YOLOV8_PT="$YOLO_MODELS_DIR/yolov8n.pt"
 YOLOV8_TXT="$GRAB_DEMO_DIR/yolov8n.txt"
 
-# apt 源相关路径
-SOURCES_LIST="/etc/apt/sources.list"
-SOURCES_BACKUP=""          # 备份文件路径，切换源后设置
-SOURCES_FAST_MIRROR="$PROJECT_ROOT/vnc/sources.list.arm64"
-# ROS2 apt 源（单独的 sources.list.d 文件）
-ROS2_SOURCES_LIST=""        # 运行时自动检测
-ROS2_SOURCES_BACKUP=""      # 切换后设置
-ROS2_SOURCES_LINK_TARGET="" # 若原文件是符号链接，记录原链接目标，还原时重建
-APT_SPEED_MIN_BPMS=1048576  # apt 源下载速度低于该小时就换源（1 MB/s）
-
 PIP_MIRROR="https://mirrors.cloud.tencent.com/pypi/simple"
+
+# ── 工具库 ────────────────────────────────────────────────────────────────────
+# shellcheck source=../../lib/apt_mirror_utils.sh
+source "$SCRIPT_DIR/../../lib/apt_mirror_utils.sh"
 
 # ── 工具函数 ──────────────────────────────────────────────────────────────────
 log_section() { echo; echo "────────────────────────────────────────"; echo "  $1"; echo "────────────────────────────────────────"; }
@@ -108,139 +102,6 @@ install_pip_spec_if_needed() {
         pip install -i "$PIP_MIRROR" "${extra_args[@]}" "$spec"
         log_ok "pip 包安装完成：$spec"
     fi
-}
-
-# ── apt 源速度检测与自动切换 ──────────────────────────────────────
-
-# 脱离常量，用于记录是否已切换源（不能放在子层 shell 里）
-SOURCES_SWITCHED=false
-
-# 如果切换了源，trap EXIT 时自动还原
-restore_apt_sources() {
-    if [[ "$SOURCES_SWITCHED" == true && -n "$SOURCES_BACKUP" && -f "$SOURCES_BACKUP" ]]; then
-        echo
-        log_section "还原 apt 源"
-        sudo cp "$SOURCES_BACKUP" "$SOURCES_LIST"
-        sudo rm -f "$SOURCES_BACKUP"
-        log_ok "已还原 Ubuntu 源：$SOURCES_LIST"
-    fi
-    if [[ -n "$ROS2_SOURCES_LINK_TARGET" && -n "$ROS2_SOURCES_LIST" ]]; then
-        # 原文件是符号链接：删除当前普通文件，重建符号链接
-        sudo rm -f "$ROS2_SOURCES_LIST"
-        sudo ln -s "$ROS2_SOURCES_LINK_TARGET" "$ROS2_SOURCES_LIST"
-        log_ok "已还原 ROS2 源（重建符号链接 $ROS2_SOURCES_LIST → $ROS2_SOURCES_LINK_TARGET）"
-    elif [[ -n "$ROS2_SOURCES_BACKUP" && -f "$ROS2_SOURCES_BACKUP" && -n "$ROS2_SOURCES_LIST" ]]; then
-        # 原文件是普通文件：直接覆盖还原内容
-        sudo cp "$ROS2_SOURCES_BACKUP" "$ROS2_SOURCES_LIST"
-        sudo rm -f "$ROS2_SOURCES_BACKUP"
-        log_ok "已还原 ROS2 源：$ROS2_SOURCES_LIST"
-    fi
-}
-trap restore_apt_sources EXIT
-
-# 测试当前 apt 源速度，返回 0 表示速度合格，1 表示过慢
-# 做法：从 sources.list 动态读取镜像地址，下载 ~2KB 的 Release.gpg 小文件测速
-check_apt_speed() {
-    local mirror_url
-    mirror_url=$(grep -m1 '^deb ' "$SOURCES_LIST" 2>/dev/null | awk '{print $2}')
-    if [[ -z "$mirror_url" ]]; then
-        log_info "无法解析 apt 源地址，跳过速度检测"
-        return 0
-    fi
-    local test_url="${mirror_url%/}/dists/jammy/Release.gpg"
-    log_info "检测 apt 源速度（下载 Release.gpg，低于 ${APT_SPEED_MIN_BPMS} B/s 就换源）..."
-    log_info "测试地址：$test_url"
-    local speed
-    speed=$(curl -fsSL --max-time 15 \
-        --write-out "%{speed_download}" \
-        -o /dev/null "$test_url" 2>/dev/null || echo "0")
-    # curl 输出的是浮点数（如 524288.000），取整数部分
-    speed=${speed%%.*}
-    log_info "测得速度：${speed} B/s（阈值：${APT_SPEED_MIN_BPMS} B/s）"
-    if [[ ${speed} -lt ${APT_SPEED_MIN_BPMS} ]]; then
-        return 1  # 过慢
-    else
-        log_ok "apt 源速度正常（$(( speed / 1024 )) KB/s）"
-        return 0
-    fi
-}
-
-# 生成 ROS2 镜像源文件：仅替换 URI，保留原始签名配置（包括内嵌公钥）
-generate_ros2_mirror_sources() {
-    local src_file="$1"
-    local dst_file="$2"
-
-    if grep -q '^URIs:' "$src_file"; then
-        sed 's#^URIs: .*#URIs: https://mirrors.tuna.tsinghua.edu.cn/ros2/ubuntu#; s#^Types: .*#Types: deb#' "$src_file" > "$dst_file"
-    else
-        sed 's#http://packages.ros.org/ros2/ubuntu#https://mirrors.tuna.tsinghua.edu.cn/ros2/ubuntu#g; s#https://packages.ros.org/ros2/ubuntu#https://mirrors.tuna.tsinghua.edu.cn/ros2/ubuntu#g; /^deb-src[[:space:]].*ros2\/ubuntu/d' "$src_file" > "$dst_file"
-    fi
-}
-
-# 备份当前源并切换到清华镜像
-switch_to_fast_mirror() {
-    # 切换 Ubuntu 源
-    if [[ ! -f "$SOURCES_FAST_MIRROR" ]]; then
-        log_err "备用 Ubuntu 镜像文件不存在：$SOURCES_FAST_MIRROR"
-        log_info "继续使用现有源，如安装失败请手动更换镜像"
-    else
-        SOURCES_BACKUP="${SOURCES_LIST}.$(date +%Y%m%d_%H%M%S).bak"
-        log_info "备份现有 Ubuntu 源到：$SOURCES_BACKUP"
-        sudo cp "$SOURCES_LIST" "$SOURCES_BACKUP"
-        sudo cp "$SOURCES_FAST_MIRROR" "$SOURCES_LIST"
-        SOURCES_SWITCHED=true
-        log_ok "已切换 Ubuntu 源到清华镜像"
-    fi
-    # 切换 ROS2 源（仅替换 URI，保留当前签名配置）
-    for _f in /etc/apt/sources.list.d/ros2.list \
-              /etc/apt/sources.list.d/ros2-latest.list \
-              /etc/apt/sources.list.d/ros2.sources; do
-        if [[ -f "$_f" ]]; then
-            ROS2_SOURCES_LIST="$_f"
-            break
-        fi
-    done
-    if [[ -z "$ROS2_SOURCES_LIST" ]]; then
-        log_info "未检测到 ROS2 apt 源文件，跳过 ROS2 源切换"
-    else
-        local ros2_src_for_render="$ROS2_SOURCES_LIST"
-        local ros2_rendered
-        ros2_rendered="$(mktemp)"
-
-        # 若为符号链接：记录链接目标；渲染时读取链接目标内容，确保拿到最新官方签名配置
-        if [[ -L "$ROS2_SOURCES_LIST" ]]; then
-            ROS2_SOURCES_LINK_TARGET=$(readlink "$ROS2_SOURCES_LIST")
-            log_info "ROS2 源是符号链接，链接目标：$ROS2_SOURCES_LINK_TARGET"
-            if [[ -f "$ROS2_SOURCES_LINK_TARGET" ]]; then
-                ros2_src_for_render="$ROS2_SOURCES_LINK_TARGET"
-            fi
-        else
-            ROS2_SOURCES_BACKUP="${ROS2_SOURCES_LIST}.$(date +%Y%m%d_%H%M%S).bak"
-            log_info "备份现有 ROS2 源到：$ROS2_SOURCES_BACKUP"
-            sudo cp "$ROS2_SOURCES_LIST" "$ROS2_SOURCES_BACKUP"
-        fi
-
-        generate_ros2_mirror_sources "$ros2_src_for_render" "$ros2_rendered"
-
-        if [[ -n "$ROS2_SOURCES_LINK_TARGET" ]]; then
-            sudo rm -f "$ROS2_SOURCES_LIST"
-            sudo cp "$ros2_rendered" "$ROS2_SOURCES_LIST"
-            log_ok "已切换 ROS2 源到清华镜像（保留官方签名配置，已解除符号链接）"
-        else
-            sudo cp "$ros2_rendered" "$ROS2_SOURCES_LIST"
-            log_ok "已切换 ROS2 源到清华镜像（保留官方签名配置）"
-        fi
-        rm -f "$ros2_rendered"
-    fi
-}
-
-# 在所有 apt 操作前调用一次：检测速度，必要时自动切换
-ensure_fast_apt_sources() {
-    log_section "apt 源速度检测"
-    if ! check_apt_speed; then
-        switch_to_fast_mirror
-    fi
-    sudo apt update
 }
 
 # 从 .txt 文件读取下载地址，若目标文件不存在则下载
@@ -405,7 +266,10 @@ main() {
     echo "  项目根目录：$PROJECT_ROOT"
     echo "════════════════════════════════════════════"
 
-    ensure_fast_apt_sources
+    log_section "apt 源速度检测"
+    ensure_fast_ubuntu_source
+    ensure_fast_ros2_source
+    sudo apt update
     install_ros_image_packages
     install_python_deps
     install_libnccl2
