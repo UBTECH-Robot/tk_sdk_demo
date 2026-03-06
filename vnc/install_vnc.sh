@@ -324,6 +324,7 @@ install_vnc_server() {
 
 # Test source speed and switch if necessary
 ensure_fast_ubuntu_source
+ensure_fast_ros2_source
 apt-get update
 
 # Check and install desktop environment
