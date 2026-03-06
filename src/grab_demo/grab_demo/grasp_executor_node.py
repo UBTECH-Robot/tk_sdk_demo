@@ -139,6 +139,11 @@ class GraspExecutorNode(ArmControlMixin, HandControlMixin, PoseVerificationMixin
             # ── 阶段 1：打印候选点信息 ────────────────────────────────
             self._print_candidate_info(candidate)
 
+            if candidate.pose.pose.position.z < 0.05:
+                self.get_logger().error('目标位置过低（z < 5cm），可能是误检或末端位置无法运动到的姿态，取消本次抓取')
+                self._wait_for_user_continue()
+                return
+            
             # ── 阶段 2：手臂运动到抓取准备姿态 ───────────────────────
             with self.state_lock:
                 self.state = GraspState.MOVING
