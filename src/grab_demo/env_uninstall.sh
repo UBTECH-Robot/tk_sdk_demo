@@ -28,8 +28,17 @@ apt_remove() {
 pip_uninstall() {
     local pkg="$1"
     if pip show "$pkg" &>/dev/null; then
-        pip uninstall -y "$pkg"
-        log_ok "已卸载：$pkg"
+        local uninstall_output
+        if uninstall_output="$(pip uninstall -y "$pkg" 2>&1)"; then
+            log_ok "已卸载：$pkg"
+        else
+            if grep -qi "Permission denied" <<<"$uninstall_output"; then
+                echo "  » 权限不足，跳过：$pkg"
+            else
+                echo "$uninstall_output" >&2
+                return 1
+            fi
+        fi
     else
         log_skip "$pkg"
     fi
