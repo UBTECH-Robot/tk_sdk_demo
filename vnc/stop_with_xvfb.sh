@@ -144,6 +144,10 @@ echo ""
 echo "清理临时文件..."
 rm -f /tmp/xvfb.Xauth 2>/dev/null && echo "✓ 临时Xauth已清理" || true
 
+# 恢复 apport 崩溃报告服务（VNC 启动时已 stop，现在恢复）
+sudo systemctl start apport 2>/dev/null || true
+echo "✓ apport 已恢复"
+
 # 最终验证：只检查关键进程
 echo ""
 echo "最终验证..."

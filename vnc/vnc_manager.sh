@@ -94,12 +94,14 @@ show_status() {
 
 start_service() {
     echo -e "${BLUE}启动 VNC 虚拟桌面服务...${NC}"
-    sudo bash "$SCRIPT_DIR/start_with_xvfb.sh"
+    # sudo bash "$SCRIPT_DIR/start_with_xvfb.sh"
+    bash "$SCRIPT_DIR/start_with_xvfb.sh"
 }
 
 stop_service() {
     echo -e "${BLUE}停止 VNC 虚拟桌面服务...${NC}"
-    sudo bash "$SCRIPT_DIR/stop_with_xvfb.sh"
+    # sudo bash "$SCRIPT_DIR/stop_with_xvfb.sh"
+    bash "$SCRIPT_DIR/stop_with_xvfb.sh"
 }
 
 restart_service() {

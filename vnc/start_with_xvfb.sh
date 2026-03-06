@@ -155,29 +155,32 @@ export GNOME_INITIAL_SETUP=0
 
 echo "启动 GNOME 会话..."
 
+# 仅在 VNC 会话期间压制 apport，避免弹出 "System program problem detected" 对话框
+# 只 stop 不修改配置，VNC 停止后由 stop_with_xvfb.sh 恢复
+sudo systemctl stop apport 2>/dev/null || true
+# 清除已有的崩溃报告，避免 GNOME 启动时重新弹出
+sudo rm -f /var/crash/*.crash 2>/dev/null || true
+
+# 若 vglrun 可用，将 vgl_wrappers 目录注入 PATH 头部，劫持 ros2 / rviz2 → vglrun
+# GNOME 会话所有子进程（终端、桌面启动器、脚本）均继承此 PATH
+if command -v vglrun >/dev/null 2>&1; then
+    _VGL_WRAP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/vgl_wrappers"
+    chmod +x "$_VGL_WRAP_DIR"/ros2 "$_VGL_WRAP_DIR"/rviz2 2>/dev/null || true
+    export PATH="${_VGL_WRAP_DIR}:${PATH}"
+    echo "✓ vglrun 可用，已启用 ros2/rviz2 → vglrun 劫持"
+else
+    echo "✗ vglrun 未安装，跳过 ros2/rviz2 劫持（OpenGL 渲染走软件模式）"
+fi
+
 # 直接使用 gnome-session-binary 启动，跳过登录管理器
 if [ -f /usr/libexec/gnome-session-binary ]; then
-    if command -v vglrun &> /dev/null; then
-        echo "使用 vglrun 启动 GNOME Session..."
-        DISPLAY="${DISPLAY}" XAUTHORITY="/tmp/xvfb.Xauth" \
-            vglrun +wm /usr/libexec/gnome-session-binary --session=ubuntu 2>/dev/null &
-    else
-        echo "直接启动 GNOME Session..."
-        DISPLAY="${DISPLAY}" XAUTHORITY="/tmp/xvfb.Xauth" \
-            /usr/libexec/gnome-session-binary --session=ubuntu 2>/dev/null &
-    fi
+    DISPLAY="${DISPLAY}" XAUTHORITY="/tmp/xvfb.Xauth" \
+        /usr/libexec/gnome-session-binary --session=ubuntu 2>/dev/null &
     GNOME_PID=$!
     echo "GNOME Session PID: ${GNOME_PID}"
     sleep 3
 else
-    # 备选：使用原始 gnome-session
-    if command -v vglrun &> /dev/null; then
-        echo "使用 vglrun 启动 GNOME Session..."
-        DISPLAY="${DISPLAY}" vglrun +wm gnome-session 2>/dev/null &
-    else
-        echo "使用 gnome-session..."
-        DISPLAY="${DISPLAY}" gnome-session 2>/dev/null &
-    fi
+    DISPLAY="${DISPLAY}" gnome-session 2>/dev/null &
     GNOME_PID=$!
     echo "GNOME Session PID: ${GNOME_PID}"
     sleep 2
