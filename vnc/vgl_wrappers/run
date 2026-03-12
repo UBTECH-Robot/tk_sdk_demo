@@ -26,11 +26,11 @@ fi
 # 判断是否有本地桌面环境：DISPLAY 以 ":" 开头（如 :99, :0）且 vglrun 可用
 # ssh X11 转发的 DISPLAY 格式为 "hostname:number"（如 localhost:12.0），不应使用 vglrun
 if [[ "$DISPLAY" == :* ]] && command -v vglrun >/dev/null 2>&1; then
-    # echo "✓ 桌面环境（DISPLAY=$DISPLAY） + vglrun 可用，正在通过 vglrun 启动 $_CMD_NAME..."
+    echo "✓ 桌面环境（DISPLAY=$DISPLAY） + vglrun 可用，正在通过 vglrun 启动 $_CMD_NAME..."
     exec vglrun "$_REAL_CMD" "$@"
 else
     if [[ "$DISPLAY" != :* ]]; then
-        # echo "ℹ 非桌面环境（DISPLAY=$DISPLAY），直接启动 $_CMD_NAME..."
+        echo "ℹ 非桌面环境（DISPLAY=$DISPLAY），直接启动 $_CMD_NAME..."
     else
         echo "⚠️ vglrun 不可用，直接启动 $_CMD_NAME..."
     fi
