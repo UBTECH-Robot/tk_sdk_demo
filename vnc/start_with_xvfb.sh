@@ -170,8 +170,12 @@ if command -v vglrun >/dev/null 2>&1; then
     ln -sf run "$_VGL_WRAP_DIR"/ros2
     ln -sf run "$_VGL_WRAP_DIR"/rviz2
     # 注入 PATH
-    source "$(dirname "${BASH_SOURCE[0]}")/prepend_path.sh" "$_VGL_WRAP_DIR"
+    _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "$_SCRIPT_DIR/prepend_path.sh" "$_VGL_WRAP_DIR"
     echo "✓ vglrun 可用，已启用 ros2/rviz2 → vglrun 劫持"
+    echo ""
+    echo "若需在其他终端手动启用，请执行："
+    echo "  source \"$_SCRIPT_DIR/prepend_path.sh\" \"$_VGL_WRAP_DIR\""
 else
     echo "✗ vglrun 未安装，跳过 ros2/rviz2 劫持（OpenGL 渲染走软件模式）"
 fi

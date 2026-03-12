@@ -22,8 +22,5 @@ if [ -n "$1" ]; then
     prepend_path "$1"
     if [ -n "$PREPEND_PATH_RESULT" ]; then
         echo "✓ 已将目录添加到 PATH: $PREPEND_PATH_RESULT"
-        echo ""
-        echo "若需在其他终端手动添加，请执行："
-        echo "  export PATH=\"$PREPEND_PATH_RESULT:\$PATH\""
     fi
 fi
