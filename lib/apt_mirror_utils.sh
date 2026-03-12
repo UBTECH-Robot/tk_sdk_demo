@@ -95,13 +95,14 @@ _check_mirror_speed() {
         fi
     done
 
+    log_info "测试地址：$test_url"
+
     if [[ -z "$test_url" ]]; then
         log_info "无法定位测速文件，跳过速度检测"
         return 0
     fi
 
     log_info "检测 apt 源速度（基于索引文件分片下载，中位数低于 ${APT_SPEED_MIN_BPMS} B/s 就换源）..."
-    log_info "测试地址：$test_url"
 
     local samples=()
     local raw s i
@@ -133,8 +134,14 @@ check_apt_speed() {
     local deb_line
     deb_line=$(grep -m1 '^deb ' "$SOURCES_LIST" 2>/dev/null || true)
     local mirror_url suite
-    mirror_url=$(awk '{print $2}' <<<"$deb_line")
-    suite=$(awk '{print $3}' <<<"$deb_line")
+    # 直接匹配 http/https URL，不受 [options] 影响
+    mirror_url=$(grep -oE 'https?://[^[:space:]]+' <<<"$deb_line" | head -1)
+    # suite 是 URL 后的第一个字段
+    suite=$(awk '{
+        for(i=1;i<=NF;i++) {
+            if($i ~ /^https?:\/\//) { print $(i+1); exit }
+        }
+    }' <<<"$deb_line")
     if [[ -z "$mirror_url" ]]; then
         log_info "无法解析 Ubuntu 源地址，跳过速度检测"
         return 0
@@ -160,9 +167,11 @@ check_ros2_apt_speed() {
     # 兼容 DEB822（URIs:）和旧格式（deb ...）
     local mirror_url
     if grep -q '^URIs:' "$ros2_src" 2>/dev/null; then
+        # DEB822 格式
         mirror_url=$(awk '/^URIs:/{print $2; exit}' "$ros2_src")
     else
-        mirror_url=$(awk '/^deb /{print $2; exit}' "$ros2_src")
+        # one-line 格式：直接匹配 http/https URL，不受 [options] 影响
+        mirror_url=$(grep -m1 '^deb ' "$ros2_src" | grep -oE 'https?://[^[:space:]]+' | head -1)
     fi
     if [[ -z "$mirror_url" ]]; then
         log_info "无法解析 ROS2 源地址，跳过速度检测"

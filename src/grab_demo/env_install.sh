@@ -138,13 +138,14 @@ download_if_missing() {
 install_ros_image_packages() {
     log_section "步骤 1/6：安装 ROS 图像相关依赖"
     install_apt_packages \
-        # ros-humble-desktop \
+        ros-humble-desktop \
         ros-humble-cv-bridge \
         ros-humble-image-transport \
         ros-humble-sensor-msgs \
         ros-humble-robot-state-publisher \
         python3-pip
         # python3-opencv \
+        # ros-humble-desktop \
         # python3-numpy
     log_ok "ROS 图像依赖安装完成"
 }
