@@ -7,12 +7,12 @@
 并将其保存为PCM和WAV格式文件。
 
 使用方法：
-    1. 启动音频保存节点：
-       ros2 run sdk_demo audio_saver
-    
-    2. 编译命令：
+    1. 编译命令：
        colcon build
        source install/setup.bash
+    
+    2. 启动音频保存节点：
+       ros2 run sdk_demo audio_saver
 
     3. 播放保存的PCM文件（Linux系统）：
        cd ~/sdk_demo/saved_data/audio_files && aplay -f S16_LE -r 16000 -c 1 audio_113806860.pcm
