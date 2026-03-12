@@ -165,8 +165,12 @@ sudo rm -f /var/crash/*.crash 2>/dev/null || true
 # GNOME 会话所有子进程（终端、桌面启动器、脚本）均继承此 PATH
 if command -v vglrun >/dev/null 2>&1; then
     _VGL_WRAP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/vgl_wrappers"
-    chmod +x "$_VGL_WRAP_DIR"/ros2 "$_VGL_WRAP_DIR"/rviz2 2>/dev/null || true
-    export PATH="${_VGL_WRAP_DIR}:${PATH}"
+    # 确保 run 脚本可执行，并创建 ros2/rviz2 软链接
+    chmod +x "$_VGL_WRAP_DIR"/run 2>/dev/null || true
+    ln -sf run "$_VGL_WRAP_DIR"/ros2
+    ln -sf run "$_VGL_WRAP_DIR"/rviz2
+    # 注入 PATH
+    source "$(dirname "${BASH_SOURCE[0]}")/prepend_path.sh" "$_VGL_WRAP_DIR"
     echo "✓ vglrun 可用，已启用 ros2/rviz2 → vglrun 劫持"
 else
     echo "✗ vglrun 未安装，跳过 ros2/rviz2 劫持（OpenGL 渲染走软件模式）"

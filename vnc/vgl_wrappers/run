@@ -1,0 +1,32 @@
+#!/bin/bash
+# vglrun 通用 wrapper 脚本
+# 将本文件重命名为任意命令名，即可自动劫持该命令通过 vglrun 运行
+# 例如：
+# ln -s run ros2 → 自动劫持 ros2
+# ln -s run rviz2 → 自动劫持 rviz2
+
+# 会话级 PATH 劫持脚本，由 start_with_xvfb.sh 在启动 gnome-session 前将本目录
+# 置于 PATH 头部，经由本脚本的命令调用均自动经过 vglrun。
+
+# 获取当前脚本文件名（即要劫持的命令名）
+_CMD_NAME=$(basename "$0")
+
+# 从 PATH 中移除本目录，定位真实的命令
+_WRAP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_REAL_CMD=$(
+    PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -vxF "$_WRAP_DIR" | tr '\n' ':')
+    command -v "$_CMD_NAME" 2>/dev/null
+)
+
+if [ -z "$_REAL_CMD" ]; then
+    echo "⚠️ 找不到真实的 $_CMD_NAME 命令"
+    exit 127
+fi
+
+if command -v vglrun >/dev/null 2>&1; then
+    echo "✓ vglrun 可用，正在通过 vglrun 启动 $_CMD_NAME..."
+    exec vglrun "$_REAL_CMD" "$@"
+else
+    echo "⚠️ vglrun 不可用，正在直接启动 $_CMD_NAME..."
+    exec "$_REAL_CMD" "$@"
+fi
