@@ -27,7 +27,4 @@ prepend_path() {
 # 如果带参数调用，直接执行并输出提示
 if [ -n "$1" ]; then
     prepend_path "$1"
-    if [ -n "$PREPEND_PATH_RESULT" ]; then
-        # echo "✓ 已将目录添加到 PATH 头部: $PREPEND_PATH_RESULT"
-    fi
 fi
