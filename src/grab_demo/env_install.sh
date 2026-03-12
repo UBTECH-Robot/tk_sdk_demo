@@ -155,28 +155,13 @@ install_ros_image_packages() {
 ensure_ros2_in_bashrc() {
     log_section "步骤 1.5/6：配置 ROS2 环境变量"
 
-    local bashrc="$HOME/.bashrc"
     local ros_setup="/opt/ros/humble/setup.bash"
-
     if [[ ! -f "$ros_setup" ]]; then
         log_err "ROS2 环境文件不存在：$ros_setup"
         return 1
     fi
 
-    # 检查 ~/.bashrc 中是否已有 source 或 . 命令加载 ROS2 环境
-    if grep -qE '^\s*(source|\.)\s+.*ros/humble/setup\.bash' "$bashrc" 2>/dev/null; then
-        log_skip "ROS2 环境已配置在 ~/.bashrc"
-        return 0
-    fi
-
-    # 追加到 ~/.bashrc
-    echo "" >> "$bashrc"
-    echo "# ROS2 Humble 环境" >> "$bashrc"
-    echo "source /opt/ros/humble/setup.bash" >> "$bashrc"
-    log_ok "已将 ROS2 环境添加到 ~/.bashrc"
-
-    # 提示用户
-    log_info "请在当前终端执行：source ~/.bashrc"
+    ensure_line_in_bashrc "source /opt/ros/humble/setup.bash"
 }
 
 # 2. Python 依赖（通过 pip，使用腾讯镜像加速）

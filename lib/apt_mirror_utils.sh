@@ -269,3 +269,29 @@ ensure_fast_ros2_source() {
         switch_ros2_to_fast_mirror
     fi
 }
+
+# ── bashrc 配置工具 ────────────────────────────────────────────────────────────
+# 确保指定行存在于 ~/.bashrc，不存在则追加
+# 用法：ensure_line_in_bashrc "source /opt/ros/humble/setup.bash"
+# 返回：0=已存在或已添加，1=添加失败
+ensure_line_in_bashrc() {
+    local line="$1"
+    local bashrc="$HOME/.bashrc"
+
+    if [[ -z "$line" ]]; then
+        log_err "ensure_line_in_bashrc: 参数不能为空"
+        return 1
+    fi
+
+    # 检查 ~/.bashrc 中是否已存在该行（精确匹配）
+    if grep -qxF "$line" "$bashrc" 2>/dev/null; then
+        log_skip "已在 ~/.bashrc 中：$line"
+        return 0
+    fi
+
+    # 追加到 ~/.bashrc
+    echo "" >> "$bashrc"
+    echo "$line" >> "$bashrc"
+    log_ok "已添加到 ~/.bashrc：$line"
+    return 0
+}

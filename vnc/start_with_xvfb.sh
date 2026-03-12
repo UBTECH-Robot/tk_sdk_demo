@@ -4,6 +4,10 @@
 # 此方案创建一个虚拟显示器并在其上运行完整的桌面环境
 # 特别注意：禁用登录界面，直接启动桌面
 
+# 加载工具库
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$_SCRIPT_DIR/../lib/apt_mirror_utils.sh"
+
 DISPLAY=":99"
 SCREEN_WIDTH="1920"
 SCREEN_HEIGHT="1080"
@@ -161,21 +165,30 @@ sudo systemctl stop apport 2>/dev/null || true
 # 清除已有的崩溃报告，避免 GNOME 启动时重新弹出
 sudo rm -f /var/crash/*.crash 2>/dev/null || true
 
+# 禁止弹出软件更新和系统升级窗口（仅 VNC 会话期间）
+# 停止 update-notifier 服务，避免弹出 "有可用更新" 对话框
+sudo systemctl stop update-notifier-download 2>/dev/null || true
+sudo systemctl stop update-notifier-motd 2>/dev/null || true
+# 禁用 GNOME 软件更新通知（仅当前用户）
+gsettings set org.gnome.software download-updates false 2>/dev/null || true
+gsettings set org.gnome.desktop.notifications show-banners false 2>/dev/null || true
+
 # 若 vglrun 可用，将 vgl_wrappers 目录注入 PATH 头部，劫持 ros2 / rviz2 → vglrun
 # GNOME 会话所有子进程（终端、桌面启动器、脚本）均继承此 PATH
 if command -v vglrun >/dev/null 2>&1; then
-    _VGL_WRAP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/vgl_wrappers"
+    _VGL_WRAP_DIR="$_SCRIPT_DIR/vgl_wrappers"
     # 确保 run 脚本可执行，并创建 ros2/rviz2 软链接
     chmod +x "$_VGL_WRAP_DIR"/run 2>/dev/null || true
     ln -sf run "$_VGL_WRAP_DIR"/ros2
     ln -sf run "$_VGL_WRAP_DIR"/rviz2
     # 注入 PATH
-    _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     source "$_SCRIPT_DIR/prepend_path.sh" "$_VGL_WRAP_DIR"
     echo "✓ vglrun 可用，已启用 ros2/rviz2 → vglrun 劫持"
     echo ""
     echo "若需在其他终端手动启用，请执行："
     echo "  source \"$_SCRIPT_DIR/prepend_path.sh\" \"$_VGL_WRAP_DIR\""
+    # 同时添加到 ~/.bashrc，确保新终端自动启用
+    ensure_line_in_bashrc "source \"$_SCRIPT_DIR/prepend_path.sh\" \"$_VGL_WRAP_DIR\""
 else
     echo "✗ vglrun 未安装，跳过 ros2/rviz2 劫持（OpenGL 渲染走软件模式）"
 fi
