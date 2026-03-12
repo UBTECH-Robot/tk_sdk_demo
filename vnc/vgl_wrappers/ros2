@@ -13,7 +13,9 @@ _real_ros2=$(
 _real_ros2="${_real_ros2:-/opt/ros/humble/bin/ros2}"
 
 if command -v vglrun >/dev/null 2>&1; then
+    echo "✓ vglrun 可用，正在通过 vglrun 启动 ros2..."
     exec vglrun "$_real_ros2" "$@"
 else
+    echo "⚠️ vglrun 不可用，正在直接启动 ros2..."
     exec "$_real_ros2" "$@"
 fi

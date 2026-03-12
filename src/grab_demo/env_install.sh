@@ -138,6 +138,7 @@ download_if_missing() {
 install_ros_image_packages() {
     log_section "步骤 1/6：安装 ROS 图像相关依赖"
     install_apt_packages \
+        # ros-humble-desktop \
         ros-humble-cv-bridge \
         ros-humble-image-transport \
         ros-humble-sensor-msgs \

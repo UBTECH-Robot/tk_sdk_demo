@@ -14,6 +14,14 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
+if [ -n "${SUDO_USER:-}" ]; then
+    RUNNER=(sudo bash)
+    RUN_MODE="sudo"
+else
+    RUNNER=(bash)
+    RUN_MODE="普通"
+fi
+
 show_usage() {
     echo "用法: $0 {start|stop|restart|status}"
     echo ""
@@ -33,6 +41,8 @@ show_status() {
     echo "========================================"
     echo "VNC 服务状态"
     echo "========================================"
+    echo ""
+    echo "当前运行模式: ${RUN_MODE}模式"
     echo ""
     
     # 检查x11vnc
@@ -94,14 +104,14 @@ show_status() {
 
 start_service() {
     echo -e "${BLUE}启动 VNC 虚拟桌面服务...${NC}"
-    # sudo bash "$SCRIPT_DIR/start_with_xvfb.sh"
-    bash "$SCRIPT_DIR/start_with_xvfb.sh"
+    echo "当前运行模式: ${RUN_MODE}模式"
+    "${RUNNER[@]}" "$SCRIPT_DIR/start_with_xvfb.sh"
 }
 
 stop_service() {
     echo -e "${BLUE}停止 VNC 虚拟桌面服务...${NC}"
-    # sudo bash "$SCRIPT_DIR/stop_with_xvfb.sh"
-    bash "$SCRIPT_DIR/stop_with_xvfb.sh"
+    echo "当前运行模式: ${RUN_MODE}模式"
+    "${RUNNER[@]}" "$SCRIPT_DIR/stop_with_xvfb.sh"
 }
 
 restart_service() {
@@ -109,12 +119,6 @@ restart_service() {
     sleep 2
     start_service
 }
-
-# 检查EUID
-if [ "$COMMAND" != "status" ] && [ "$EUID" -eq 0 ]; then
-   echo -e "${RED}错误: 请不要以root身份运行此脚本${NC}"
-   exit 1
-fi
 
 # 执行命令
 case "$COMMAND" in
