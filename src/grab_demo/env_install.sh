@@ -143,6 +143,7 @@ install_ros_image_packages() {
         ros-humble-image-transport \
         ros-humble-sensor-msgs \
         ros-humble-robot-state-publisher \
+        python3-colcon-common-extensions \
         python3-pip
         # python3-opencv \
         # ros-humble-desktop \
@@ -168,15 +169,30 @@ install_python_deps() {
         install_pip_spec_if_needed "$spec"
     done
 
-    # ultralytics 和 torchvision 不带依赖安装，避免覆盖 arm64 专用 torch
+    # ultralytics 不带依赖安装，避免覆盖 arm64 专用 torch
     install_pip_spec_if_needed "ultralytics==8.3.232" --no-deps
-    install_pip_spec_if_needed "torchvision==0.22.0" --no-deps
+
+    # arm64: torchvision 单独安装（不带依赖，避免覆盖 arm64 专用 torch）
+    # x86_64: torchvision 随 torch 一起安装，此处跳过
+    local arch
+    arch="$(uname -m)"
+    if [[ "$arch" == "aarch64" ]]; then
+        install_pip_spec_if_needed "torchvision==0.22.0" --no-deps
+    fi
 
     log_ok "Python 依赖安装完成"
 }
 
-# 3. libnccl2（torch 运行时依赖的 NCCL 动态库）
+# 3. libnccl2（torch 运行时依赖的 NCCL 动态库，仅 arm64 需要）
 install_libnccl2() {
+    local arch
+    arch="$(uname -m)"
+    if [[ "$arch" != "aarch64" ]]; then
+        log_section "步骤 3/6：安装 libnccl2"
+        log_skip "libnccl2（仅 arm64 需要，当前架构：$arch）"
+        return 0
+    fi
+
     log_section "步骤 3/6：安装 libnccl2"
     download_if_missing "$LIBNCCL_DEB" "$LIBNCCL_TXT" "libnccl2 deb 包"
 
@@ -200,13 +216,18 @@ install_libnccl2() {
     fi
 }
 
-# 4. torch（arm64 GPU 版，从本地 whl 安装）
+# 4. torch（根据架构自动选择安装方式）
 install_torch() {
-    log_section "步骤 4/6：安装 torch（arm64 GPU 版）"
-    download_if_missing "$TORCH_WHL" "$TORCH_TXT" "torch whl 包"
+    local arch
+    arch="$(uname -m)"
 
-    local installed_torch_version
-    installed_torch_version="$(python3 - << 'PY'
+    case "$arch" in
+        aarch64)
+            log_section "步骤 4/6：安装 torch（arm64 GPU 版）"
+            download_if_missing "$TORCH_WHL" "$TORCH_TXT" "torch whl 包"
+
+            local installed_torch_version
+            installed_torch_version="$(python3 - << 'PY'
 try:
     import torch
     print(torch.__version__)
@@ -214,13 +235,38 @@ except Exception:
     pass
 PY
 )"
-
-    if [[ "$installed_torch_version" == "$TORCH_VERSION" ]]; then
-        log_skip "torch（版本 $TORCH_VERSION）"
-    else
-        pip install "$TORCH_WHL"
-        log_ok "torch 安装完成"
-    fi
+            if [[ "$installed_torch_version" == "$TORCH_VERSION" ]]; then
+                log_skip "torch（版本 $TORCH_VERSION）"
+            else
+                pip install "$TORCH_WHL"
+                log_ok "torch 安装完成"
+            fi
+            ;;
+        x86_64)
+            log_section "步骤 4/6：安装 torch（x86_64 GPU 版）"
+            # 检查是否已安装支持 CUDA 的 torch
+            local has_cuda_torch
+            has_cuda_torch="$(python3 - << 'PY'
+try:
+    import torch
+    print("cuda" if torch.cuda.is_available() else "no_cuda")
+except Exception:
+    print("none")
+PY
+)"
+            if [[ "$has_cuda_torch" == "cuda" ]]; then
+                log_skip "torch（已安装 CUDA 版本：$(python3 -c 'import torch; print(torch.__version__)' 2>/dev/null || echo '未知')）"
+            else
+                log_info "正在安装 torch CUDA 版本..."
+                pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+                log_ok "torch 安装完成"
+            fi
+            ;;
+        *)
+            log_err "不支持的架构：$arch"
+            exit 1
+            ;;
+    esac
 }
 
 # 5. YOLO 预训练模型
