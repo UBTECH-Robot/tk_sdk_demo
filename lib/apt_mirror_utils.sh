@@ -285,7 +285,6 @@ ensure_line_in_bashrc() {
 
     # 检查 ~/.bashrc 中是否已存在该行（精确匹配）
     if grep -qxF "$line" "$bashrc" 2>/dev/null; then
-        log_skip "已在 ~/.bashrc 中：$line"
         return 0
     fi
 
