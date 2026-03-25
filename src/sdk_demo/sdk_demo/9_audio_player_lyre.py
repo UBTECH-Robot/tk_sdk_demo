@@ -131,6 +131,22 @@ class AudioFilePlayerNode(Node):
         self.get_logger().warning(f'服务等待超时 ({self.service_timeout} 秒)')
         return False
 
+    def _resolve_audio_path(self, path: str) -> tuple[bool, str, str]:
+        """
+        解析并检查音频文件路径。
+
+        返回:
+            tuple[bool, str, str]: (是否有效, 规范化路径, 提示信息)
+        """
+        if not path:
+            return False, '', '音频文件路径不能为空'
+
+        normalized_path = os.path.abspath(os.path.expanduser(path))
+        if not os.path.isfile(normalized_path):
+            return False, normalized_path, f'音频文件不存在: {normalized_path}'
+
+        return True, normalized_path, ''
+
     def play_file(
         self,
         path: str,
@@ -159,10 +175,14 @@ class AudioFilePlayerNode(Node):
             self.get_logger().error(message)
             return False, sid or '', message
 
+        is_valid, normalized_path, message = self._resolve_audio_path(path)
+        if not is_valid:
+            self.get_logger().error(message)
+            return False, sid or '', message
+
         if sid is None:
             sid = str(uuid.uuid4())
 
-        normalized_path = os.path.abspath(os.path.expanduser(path))
         self.get_logger().info(
             f'正在请求播放文件: "{normalized_path}" (force={force}, sid={sid})'
         )
@@ -223,7 +243,11 @@ class AudioFilePlayerNode(Node):
         if sid is None:
             sid = str(uuid.uuid4())
 
-        normalized_path = os.path.abspath(os.path.expanduser(path))
+        is_valid, normalized_path, message = self._resolve_audio_path(path)
+        if not is_valid:
+            self.get_logger().error(message)
+            return None
+
         self.get_logger().info(f'异步请求播放文件: "{normalized_path}" (sid={sid})')
 
         request = PlayFile.Request()
@@ -272,6 +296,14 @@ def main(args=None):
     if not audio_path:
         parser.error('必须提供音频文件路径，可以使用位置参数或 --path')
 
+    resolved_audio_path = os.path.abspath(os.path.expanduser(audio_path))
+    if not os.path.isfile(resolved_audio_path):
+        print('=' * 70)
+        print(f'错误: 音频文件不存在: {resolved_audio_path}')
+        print('请检查路径是否正确，并确认文件已存在后再运行。')
+        print('=' * 70)
+        return 1
+
     rclpy.init(args=args)
     node = None
 
@@ -280,7 +312,7 @@ def main(args=None):
         node.service_timeout = parsed_args.service_timeout
 
         success, sid, message = node.play_file(
-            path=audio_path,
+            path=resolved_audio_path,
             force=parsed_args.force,
             sid=parsed_args.sid,
             seq=parsed_args.seq,
