@@ -12,6 +12,12 @@
 
 执行 `source install.bash` 设置环境变量
 
+注意：如果构建时看到 `setuptools==59.6.0` 和 `setuptools-scm>=8.x` 的兼容警告，说明当前 setuptools 版本过低，请先升级后再构建：
+
+```bash
+python3 -m pip install --user -U "setuptools>=61" wheel
+```
+
 每一个示例代码都使用 `ros run sdk_demo xxx` 来运行，详细的可参考每个源码文件顶部的说明，都列出了详细的运行命令及注意事项的。
 
 # 示例列表
@@ -28,6 +34,7 @@
 | src/sdk_demo/sdk_demo/8_leg_motor_control.py | 腿部电机控制 | 见源码顶部 |
 | src/sdk_demo/sdk_demo/9_audio_asr.py | 语音识别 | 见源码顶部 |
 | src/sdk_demo/sdk_demo/9_audio_player.py | 音频播放 | 见源码顶部 |
+| src/sdk_demo/sdk_demo/9_audio_player_lyre.py | 通过 lyre 服务播放音频文件 | 见源码顶部 |
 | src/sdk_demo/sdk_demo/9_audio_saver.py | 音频保存 | 见源码顶部 |
 | src/sdk_demo/sdk_demo/9_audio_tts.py | 文本转语音 | 见源码顶部 |
 | src/sdk_demo/sdk_demo/10_depth_camera.py | 深度相机数据读取 | 见源码顶部 |

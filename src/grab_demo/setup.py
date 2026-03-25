@@ -16,7 +16,6 @@ setup(
     maintainer_email='han.li@ubtrobot.com',
     description='TODO: Package description',
     license='TODO: License declaration',
-    tests_require=['pytest'],
     entry_points={
         'console_scripts': [
             'yolo_detect_node = grab_demo.yolo_detect_node:main',
